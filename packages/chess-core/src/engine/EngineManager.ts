@@ -23,6 +23,10 @@ export class EngineManager {
     if (msg === 'uciok') {
       this.isReady = true;
       this.worker?.postMessage('isready');
+      if (this.pendingFen) {
+        this.analyze(this.pendingFen, this.pendingDepth);
+        this.pendingFen = null;
+      }
     }
     
     const evaluation = EngineParser.parseUciInfo(msg);
@@ -34,8 +38,15 @@ export class EngineManager {
     }
   }
 
+  private pendingFen: string | null = null;
+  private pendingDepth: number = 15;
+
   public analyze(fen: string, depth: number = 15) {
-    if (!this.isReady || !this.worker) return;
+    if (!this.isReady || !this.worker) {
+      this.pendingFen = fen;
+      this.pendingDepth = depth;
+      return;
+    }
     this.worker.postMessage('stop');
     this.worker.postMessage(`position fen ${fen}`);
     this.worker.postMessage(`go depth ${depth}`);

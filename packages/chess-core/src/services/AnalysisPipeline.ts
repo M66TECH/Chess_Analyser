@@ -16,8 +16,9 @@ export class AnalysisPipeline {
     this.eventBus.on('MovePlayed', ({ move }) => {
       // 1. Move Validator
       const legal = this.moveManager.playMove(move);
+      const fen = this.moveManager.getFen();
+      
       if (legal) {
-        const fen = this.moveManager.getFen();
         this.eventBus.emit('PositionChanged', { fen });
         
         // 2. Heatmap Calculator
@@ -26,6 +27,9 @@ export class AnalysisPipeline {
 
         // 3. Engine (Triggers evaluation update asynchronously)
         this.engineManager.analyze(fen, 15);
+      } else {
+        // Force the board to snap back to the current valid FEN if the move was illegal
+        this.eventBus.emit('PositionChanged', { fen });
       }
     });
 

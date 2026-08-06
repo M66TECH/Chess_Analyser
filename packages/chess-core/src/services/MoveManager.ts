@@ -19,11 +19,19 @@ export class MoveManager {
   }
 
   public playMove(uci: string): boolean {
-    const move = parseUci(uci);
+    let move = parseUci(uci);
     if (!move) return false;
     
-    // Check if move is legal
-    if (!this.pos.isLegal(move)) return false;
+    // Check if standard move is legal
+    if (!this.pos.isLegal(move)) {
+      // Try promotion to queen if it was potentially a promotion missing the 'q'
+      const promotionMove = parseUci(uci + 'q');
+      if (promotionMove && this.pos.isLegal(promotionMove)) {
+        move = promotionMove;
+      } else {
+        return false;
+      }
+    }
     
     this.pos.play(move);
     return true;
