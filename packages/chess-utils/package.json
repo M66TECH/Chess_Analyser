@@ -1,0 +1,12 @@
+{
+  "name": "@chess-analyzer/chess-utils",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "lint": "eslint \"**/*.ts*\""
+  },
+  "devDependencies": {
+    "typescript": "^5.x.x"
+  }
+}
