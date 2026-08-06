@@ -1,37 +1,42 @@
-import { Chess, Position } from 'chessops/chess';
-import { makeFen, parseFen } from 'chessops/fen';
-import { parseUci } from 'chessops/util';
+import { GameEventBus } from '../events/GameEventBus';
+import { MoveManager } from '../services/MoveManager';
+import { EngineManager } from '../engine/EngineManager';
+import { AnalysisPipeline } from '../services/AnalysisPipeline';
+import { HistoryManager } from '../services/HistoryManager';
 
 export class GameManager {
-  private pos: Position;
+  public eventBus: GameEventBus;
+  public moveManager: MoveManager;
+  public engineManager: EngineManager;
+  public historyManager: HistoryManager;
+  public pipeline: AnalysisPipeline;
 
-  constructor(fen?: string) {
-    if (fen) {
-      const parsed = parseFen(fen).unwrap();
-      this.pos = Chess.fromSetup(parsed).unwrap();
-    } else {
-      this.pos = Chess.default();
-    }
-  }
-
-  public getFen(): string {
-    return makeFen(this.pos.toSetup());
-  }
-
-  public playMove(uci: string): boolean {
-    const move = parseUci(uci);
-    if (!move) return false;
+  constructor() {
+    this.eventBus = new GameEventBus();
+    this.moveManager = new MoveManager();
+    this.engineManager = new EngineManager(this.eventBus);
+    this.historyManager = new HistoryManager();
     
-    // Check if move is legal
-    if (!this.pos.isLegal(move)) return false;
-    
-    this.pos.play(move);
-    return true;
+    this.pipeline = new AnalysisPipeline(
+      this.eventBus,
+      this.moveManager,
+      this.engineManager
+    );
+
+    // Initialize Engine
+    this.engineManager.init();
+
+    // Track history automatically
+    this.eventBus.on('PositionChanged', ({ fen }) => {
+      this.historyManager.addPosition(fen);
+    });
   }
 
-  public turn(): 'white' | 'black' {
-    return this.pos.turn === 'white' ? 'white' : 'black';
+  public init() {
+    this.pipeline.initialize();
   }
 
-  // TODO: Add move history, variations, and more advanced chessops integration
+  public playMove(uci: string) {
+    this.eventBus.emit('MovePlayed', { fen: this.moveManager.getFen(), move: uci });
+  }
 }
