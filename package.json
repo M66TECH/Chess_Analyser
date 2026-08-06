@@ -2,6 +2,7 @@
   "name": "chess_analyzer",
   "version": "1.0.0",
   "description": "",
+  "packageManager": "npm@11.6.0",
   "main": "index.js",
   "directories": {
     "doc": "docs"
