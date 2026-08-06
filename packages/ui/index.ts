@@ -1,3 +1,1 @@
-export const UIPlaceholder = () => {
-  return "UI Placeholder";
-};
+export * from './src/ChessBoard';

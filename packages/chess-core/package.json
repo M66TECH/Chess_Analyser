@@ -1,0 +1,15 @@
+{
+  "name": "@chess-analyzer/chess-core",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "lint": "eslint \"**/*.ts*\""
+  },
+  "dependencies": {
+    "chessops": "^0.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.x.x"
+  }
+}
