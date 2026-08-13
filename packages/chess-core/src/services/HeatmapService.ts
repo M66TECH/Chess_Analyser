@@ -18,16 +18,13 @@ export class HeatmapService {
       }
     }
 
-    // A simple influence model: count how many pieces of each color attack a square
-    // In chessops, pos.board has pieces. We can iterate over all squares 0..63
+    // Count how many pieces of each color attack a square
     for (let sq = 0; sq < 64; sq++) {
       const piece = pos.board.get(sq);
       if (piece) {
         const color = piece.color;
-        // get attacks for this piece on this square
         const attackedSquares = attacks(piece, sq as Square, pos.board.occupied);
         
-        // Convert SquareSet to array of squares and update heatmap
         for (const targetSq of attackedSquares) {
           const file = FILES[targetSq % 8];
           const rank = RANKS[Math.floor(targetSq / 8)];

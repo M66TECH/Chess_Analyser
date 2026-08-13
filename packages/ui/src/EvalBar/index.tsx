@@ -6,38 +6,56 @@ export interface EvalBarProps {
   orientation?: 'white' | 'black';
 }
 
+/**
+ * Converts centipawns to win probability using the same sigmoid formula as MoveClassifier.
+ * Ensures the EvalBar is visually consistent with the analysis engine.
+ */
+function cpToWinProb(cp: number): number {
+  const clamped = Math.max(-10000, Math.min(10000, cp));
+  return 1 / (1 + Math.exp(-0.00368208 * clamped));
+}
+
 export const EvalBar: React.FC<EvalBarProps> = ({ cp = 0, mate, orientation = 'white' }) => {
-  let whiteScore = 50;
-  
+  let whiteWinProb: number;
+
   if (mate !== undefined) {
-    if (mate > 0) whiteScore = 100;
-    else if (mate < 0) whiteScore = 0;
+    whiteWinProb = mate > 0 ? 0.99 : 0.01;
   } else {
-    // Non-linear scaling for cp to make small differences visible but cap at huge differences
-    // Use a sigmoid-like or simple clamping
-    whiteScore = 50 + (cp / 20);
-    whiteScore = Math.max(0, Math.min(100, whiteScore));
+    whiteWinProb = cpToWinProb(cp);
   }
 
-  const displayScore = orientation === 'white' ? whiteScore : 100 - whiteScore;
-  const blackScore = 100 - displayScore;
+  const whitePercent = orientation === 'white'
+    ? whiteWinProb * 100
+    : (1 - whiteWinProb) * 100;
+  const blackPercent = 100 - whitePercent;
+
+  const displayScore = mate !== undefined
+    ? `M${Math.abs(mate)}`
+    : (cp > 0 ? '+' : '') + (cp / 100).toFixed(1);
 
   return (
     <div className="flex flex-col h-full w-full bg-slate-900 rounded-lg overflow-hidden border border-slate-700/50 shadow-inner shadow-black/50 relative">
-      {/* Black's portion */}
-      <div 
-        className="w-full bg-gradient-to-b from-slate-900 to-slate-800 transition-[height] duration-700 ease-out" 
-        style={{ height: `${blackScore}%` }}
+      {/* Black's portion — top */}
+      <div
+        className="w-full transition-[height] duration-500 ease-out"
+        style={{
+          height: `${blackPercent}%`,
+          background: 'linear-gradient(to bottom, #1e293b, #334155)',
+        }}
       />
-      {/* White's portion */}
-      <div 
-        className="w-full bg-gradient-to-b from-slate-200 to-white transition-[height] duration-700 ease-out relative shadow-[0_-5px_15px_rgba(255,255,255,0.1)]" 
-        style={{ height: `${displayScore}%` }}
+      {/* White's portion — bottom */}
+      <div
+        className="w-full transition-[height] duration-500 ease-out relative"
+        style={{
+          height: `${whitePercent}%`,
+          background: 'linear-gradient(to bottom, #cbd5e1, #f8fafc)',
+          boxShadow: '0 -3px 12px rgba(255,255,255,0.1)',
+        }}
       />
-      
-      {/* Display text */}
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-[11px] font-bold mix-blend-difference text-white select-none pointer-events-none drop-shadow-md">
-        {mate !== undefined ? `M${Math.abs(mate)}` : (cp > 0 ? '+' : '') + (cp / 100).toFixed(1)}
+
+      {/* Score label */}
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-[10px] font-bold mix-blend-difference text-white select-none pointer-events-none drop-shadow-md tracking-tight">
+        {displayScore}
       </div>
     </div>
   );

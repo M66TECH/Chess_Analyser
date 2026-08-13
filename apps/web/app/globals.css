@@ -1,60 +1,133 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 @layer base {
   :root {
-    --background: #0f172a; /* slate-900 */
-    --foreground: #f8fafc; /* slate-50 */
-    --primary: #38bdf8; /* sky-400 */
-    --accent: #6366f1; /* indigo-500 */
-    --surface: #1e293b; /* slate-800 */
-    --surface-border: #334155; /* slate-700 */
+    --background: #080f1a;
+    --surface-1: #0f1e2f;
+    --surface-2: #162032;
+    --surface-3: #1d2d44;
+    --border: rgba(56, 189, 248, 0.08);
+    --border-bright: rgba(56, 189, 248, 0.2);
+    --foreground: #e2e8f0;
+    --muted: #64748b;
+    --primary: #38bdf8;
+    --accent: #818cf8;
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
   }
 
   body {
     background-color: var(--background);
     color: var(--foreground);
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Geist', 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   /* Custom Scrollbar */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: #334155;
-    border-radius: 4px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
-  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2563eb; }
 }
 
 @layer utilities {
-  .glass-panel {
-    background-color: rgba(30, 41, 59, 0.6);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(51, 65, 85, 0.5);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  /* Force chessground wrapper to match parent */
+  .cg-wrap {
+    width: 100% !important;
+    height: 100% !important;
+    position: relative !important;
   }
-  
-  .glow-primary {
-    box-shadow: 0 0 20px rgba(56, 189, 248, 0.15);
+
+  .glass {
+    background: rgba(15, 30, 47, 0.7);
+    backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid var(--border);
   }
-  
+
+  .glass-bright {
+    background: rgba(22, 32, 50, 0.85);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-bright);
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 24px rgba(56, 189, 248, 0.12), 0 0 60px rgba(56, 189, 248, 0.05);
+  }
+
   .glow-accent {
-    box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 0 24px rgba(129, 140, 248, 0.12);
   }
 
   .text-gradient {
+    background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
-    background-image: linear-gradient(to right, #38bdf8, #6366f1);
   }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .badge-brilliant { background: rgba(168,85,247,0.2); color: #c4b5fd; border: 1px solid rgba(168,85,247,0.4); }
+  .badge-great     { background: rgba(56,189,248,0.2); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.4); }
+  .badge-best      { background: rgba(34,197,94,0.2);  color: #86efac; border: 1px solid rgba(34,197,94,0.4); }
+  .badge-excellent { background: rgba(45,212,191,0.2); color: #5eead4; border: 1px solid rgba(45,212,191,0.4); }
+  .badge-good      { background: rgba(100,116,139,0.15); color: #94a3b8; border: 1px solid rgba(100,116,139,0.3); }
+  .badge-inaccuracy{ background: rgba(234,179,8,0.2);  color: #fde047; border: 1px solid rgba(234,179,8,0.4); }
+  .badge-mistake   { background: rgba(249,115,22,0.2); color: #fdba74; border: 1px solid rgba(249,115,22,0.4); }
+  .badge-blunder   { background: rgba(239,68,68,0.2);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); }
+  .badge-book      { background: rgba(100,116,139,0.1); color: #94a3b8; border: 1px solid rgba(100,116,139,0.2); }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(15,30,47,0.6);
+    color: var(--muted);
+    transition: all 0.15s ease;
+  }
+  .btn-icon:hover {
+    background: rgba(56,189,248,0.1);
+    border-color: var(--border-bright);
+    color: var(--primary);
+  }
+  .btn-icon:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+}
+
+/* Board piece/theme */
+.cg-board {
+  background-image: none !important;
 }
