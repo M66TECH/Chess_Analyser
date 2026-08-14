@@ -21,7 +21,7 @@ export type GameEvents = {
   EngineEvaluationUpdated: EngineEvaluation;
   BestMoveChanged: { move: string };
   HeatmapUpdated: HeatmapData;
-  PedagogyUpdated: MoveAnalysis;
+  PedagogyUpdated: MoveRecord;
   MoveRecorded: MoveRecord;
   AccuracyUpdated: GameAccuracy;
   OpeningDetected: { eco: string; name: string };

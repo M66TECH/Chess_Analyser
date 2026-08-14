@@ -5,6 +5,7 @@ export * from './game/GameManager';
 export * from './services/MoveManager';
 export * from './services/AnalysisPipeline';
 export * from './pedagogy/MoveClassifier';
+export * from './pedagogy/MotifEngine';
 export * from './pedagogy/types';
 export * from './analysis/EvalNormalizer';
 export * from './analysis/AccuracyScore';

@@ -85,6 +85,7 @@ export class EngineManager {
       return;
     }
     this.worker.postMessage('stop');
+    this.worker.postMessage('setoption name MultiPV value 3');
     this.worker.postMessage(`position fen ${fen}`);
     this.worker.postMessage(`go depth ${depth}`);
     this.eventBus.emit('AnalysisStarted', undefined as never);

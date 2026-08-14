@@ -30,3 +30,21 @@ export interface MoveAnalysis {
 }
 
 export type MoveRecord = Omit<MoveAnalysis, 'id'>;
+
+export interface MoveNode {
+  id: string;
+  uci: string;
+  san: string;
+  fenBefore: string;
+  fenAfter: string;
+  moveNumber: number;
+  color: 'white' | 'black';
+  parentId: string | null;
+  childrenIds: string[];
+  isMainline: boolean;
+}
+
+export interface GameAccuracy {
+  white: number;
+  black: number;
+}
