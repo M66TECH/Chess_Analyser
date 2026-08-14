@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport } from '@chess-analyzer/ui';
-import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore } from '@chess-analyzer/chess-core';
+import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer } from '@chess-analyzer/ui';
+import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult } from '@chess-analyzer/chess-core';
 import { GameEvents } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
@@ -18,6 +18,7 @@ export default function Home() {
   const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
   const [showReport, setShowReport] = useState(false);
   const [threatMode, setThreatMode] = useState(false);
+  const [explorerData, setExplorerData] = useState<ExplorerResult>(null);
   const multiPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const threatPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const gmRef = useRef<GameManager | null>(null);
@@ -25,9 +26,7 @@ export default function Home() {
   useEffect(() => {
     const gm = new GameManager();
     const eventBus = gm.eventBus;
-    
     gmRef.current = gm;
-    gm.init();
 
     eventBus.on('PositionChanged', ({ fen }) => {
       setFen(fen);
@@ -115,7 +114,10 @@ export default function Home() {
       threatPvs.current.clear();
       setThreatMode(false);
       setFen(fen);
+      ExplorerService.fetch(fen).then(setExplorerData);
     });
+
+    gm.init();
 
     return () => {
       gm.terminate();
@@ -185,8 +187,14 @@ export default function Home() {
               <span>🚨</span> Menaces
             </button>
           </div>
-          <div className="h-[700px] shadow-2xl">
+          <div className="h-[400px] shadow-2xl">
             <MoveList records={records} />
+          </div>
+          <div className="h-[280px] overflow-y-auto custom-scrollbar">
+            <Explorer data={explorerData} onMoveSelect={(san) => {
+              // Optionnel: on pourrait déclencher un mouvement ici s'il était légal
+              console.log('Explorer move selected:', san);
+            }}/>
           </div>
         </div>
 

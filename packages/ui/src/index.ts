@@ -3,3 +3,4 @@ export * from './EvalGraph';
 export * from './EvalBar';
 export * from './MoveList';
 export * from './GameReport';
+export * from './Explorer';
