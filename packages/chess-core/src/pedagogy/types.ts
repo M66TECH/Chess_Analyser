@@ -44,7 +44,10 @@ export interface MoveNode {
   isMainline: boolean;
 }
 
-export interface GameAccuracy {
-  white: number;
-  black: number;
+export interface GameStats {
+  accuracy: { white: number; black: number };
+  acpl: { white: number; black: number };
+  blunders: { white: number; black: number };
+  mistakes: { white: number; black: number };
+  inaccuracies: { white: number; black: number };
 }

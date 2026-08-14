@@ -13,21 +13,23 @@ export type HeatmapData = {
   };
 };
 
-import { MoveAnalysis, MoveRecord, GameAccuracy } from '../pedagogy/types';
+import { MoveAnalysis, MoveRecord, GameStats } from '../pedagogy/types';
 
 export type GameEvents = {
   MovePlayed: { fenBefore: string; fenAfter: string; move: string; nodeId: string };
   PositionChanged: { fen: string };
   EngineEvaluationUpdated: EngineEvaluation;
+  ThreatEvaluationUpdated: EngineEvaluation;
   BestMoveChanged: { move: string };
   HeatmapUpdated: HeatmapData;
   PedagogyUpdated: MoveRecord;
   MoveRecorded: MoveRecord;
-  AccuracyUpdated: GameAccuracy;
+  AccuracyUpdated: GameStats;
   OpeningDetected: { eco: string; name: string };
   NavigateTo: { fen: string; nodeId: string | null };
   AnalysisStarted: never;
   AnalysisFinished: never;
+  ThreatAnalysisStarted: never;
   // C5 — Erreur du moteur Stockfish Worker
   EngineError: string;
 };

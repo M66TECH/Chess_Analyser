@@ -6,6 +6,7 @@ export class EngineManager {
   private isReady = false;
   private pendingFen: string | null = null;
   private pendingDepth: number = 18;
+  private isThreatMode: boolean = false;
 
   constructor(
     private eventBus: GameEventBus,
@@ -74,11 +75,16 @@ export class EngineManager {
 
     const evaluation = EngineParser.parseUciInfo(msg);
     if (evaluation) {
-      this.eventBus.emit('EngineEvaluationUpdated', evaluation);
+      if (this.isThreatMode) {
+        this.eventBus.emit('ThreatEvaluationUpdated', evaluation);
+      } else {
+        this.eventBus.emit('EngineEvaluationUpdated', evaluation);
+      }
     }
   }
 
-  public analyze(fen: string, depth: number = 18) {
+  public analyze(fen: string, depth: number = 14) {
+    this.isThreatMode = false;
     if (!this.isReady || !this.worker) {
       this.pendingFen = fen;
       this.pendingDepth = depth;
@@ -89,6 +95,24 @@ export class EngineManager {
     this.worker.postMessage(`position fen ${fen}`);
     this.worker.postMessage(`go depth ${depth}`);
     this.eventBus.emit('AnalysisStarted', undefined as never);
+  }
+
+  public analyzeThreat(fen: string, depth: number = 14) {
+    this.isThreatMode = true;
+    if (!this.isReady || !this.worker) return;
+    this.worker.postMessage('stop');
+    this.worker.postMessage('setoption name MultiPV value 3');
+    // Flip turn to see opponent's threats
+    const parts = fen.split(' ');
+    if (parts.length >= 2) {
+      parts[1] = parts[1] === 'w' ? 'b' : 'w';
+      // Erase en passant since we skip a move
+      parts[3] = '-';
+      const threatFen = parts.join(' ');
+      this.worker.postMessage(`position fen ${threatFen}`);
+      this.worker.postMessage(`go depth ${depth}`);
+      this.eventBus.emit('ThreatAnalysisStarted', undefined as never);
+    }
   }
 
   public reinit() {
