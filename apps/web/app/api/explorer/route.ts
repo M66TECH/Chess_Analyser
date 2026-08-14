@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'FEN is required' }, { status: 400 });
   }
 
-  const lichessUrl = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&moves=${moves}&topGames=${topGames}`;
+  const lichessUrl = `https://explorer.lichess.org/masters?fen=${encodeURIComponent(fen)}&moves=${moves}&topGames=${topGames}`;
   const token = process.env.LICHESS_TOKEN || process.env.NEXT_PUBLIC_LICHESS_TOKEN;
 
   try {
