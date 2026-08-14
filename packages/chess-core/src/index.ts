@@ -12,3 +12,4 @@ export * from './analysis/EvalNormalizer';
 export * from './analysis/AccuracyScore';
 export * from './explorer/OpeningExplorer';
 export * from './cache/EvalCache';
+export * from './parser/PgnParser';

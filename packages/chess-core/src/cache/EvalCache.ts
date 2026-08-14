@@ -1,11 +1,40 @@
 import { EngineEvaluation } from '../events/GameEventBus';
 
 export class EvalCache {
-  private cache: Map<string, EngineEvaluation> = new Map();
-  private readonly maxSize: number;
+  private readonly dbName = 'ChessAnalyzerEvalDB';
+  private readonly storeName = 'evals';
+  private dbPromise: Promise<IDBDatabase> | null = null;
 
-  constructor(maxSize: number = 1000) {
-    this.maxSize = maxSize;
+  constructor() {
+    if (typeof window !== 'undefined' && window.indexedDB) {
+      this.initDB();
+    }
+  }
+
+  private initDB(): Promise<IDBDatabase> {
+    if (this.dbPromise) return this.dbPromise;
+
+    this.dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, 1);
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName);
+        }
+      };
+
+      request.onsuccess = (event) => {
+        resolve((event.target as IDBOpenDBRequest).result);
+      };
+
+      request.onerror = (event) => {
+        console.error('IndexedDB error:', event);
+        reject('Error opening IndexedDB');
+      };
+    });
+
+    return this.dbPromise;
   }
 
   /**
@@ -18,28 +47,51 @@ export class EvalCache {
     return parts.slice(0, 4).join(' ');
   }
 
-  public get(fen: string): EngineEvaluation | undefined {
-    const key = this.normalizeFen(fen);
-    const evalResult = this.cache.get(key);
-    if (evalResult) {
-      // LRU refresh
-      this.cache.delete(key);
-      this.cache.set(key, evalResult);
+  public async get(fen: string): Promise<EngineEvaluation | undefined> {
+    if (!this.dbPromise) return undefined;
+
+    try {
+      const db = await this.dbPromise;
+      const key = this.normalizeFen(fen);
+
+      return new Promise((resolve) => {
+        const transaction = db.transaction([this.storeName], 'readonly');
+        const store = transaction.objectStore(this.storeName);
+        const request = store.get(key);
+
+        request.onsuccess = (event) => {
+          resolve((event.target as IDBRequest).result as EngineEvaluation | undefined);
+        };
+
+        request.onerror = () => {
+          resolve(undefined);
+        };
+      });
+    } catch (e) {
+      return undefined;
     }
-    return evalResult;
   }
 
-  public set(fen: string, evaluation: EngineEvaluation): void {
-    // Quality check (Lichess style): minimum depth or nodes
-    // Let's assume we want depth >= 12 before caching
-    if (evaluation.depth < 12) return;
+  public async set(fen: string, evaluation: EngineEvaluation): Promise<void> {
+    if (!this.dbPromise) return;
+    
+    // Quality check (Lichess style): minimum depth
+    if (evaluation.depth < 14) return;
 
-    const key = this.normalizeFen(fen);
-    if (this.cache.size >= this.maxSize) {
-      // Remove oldest (first item in Map)
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) this.cache.delete(firstKey);
+    try {
+      const db = await this.dbPromise;
+      const key = this.normalizeFen(fen);
+
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([this.storeName], 'readwrite');
+        const store = transaction.objectStore(this.storeName);
+        const request = store.put(evaluation, key);
+
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject();
+      });
+    } catch (e) {
+      console.error('Failed to save eval to IndexedDB:', e);
     }
-    this.cache.set(key, evaluation);
   }
 }

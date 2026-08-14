@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer } from '@chess-analyzer/ui';
-import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult } from '@chess-analyzer/chess-core';
+import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments } from '@chess-analyzer/ui';
+import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser } from '@chess-analyzer/chess-core';
 import { GameEvents } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
@@ -126,6 +126,10 @@ export default function Home() {
 
   const stats = useMemo(() => AccuracyScore.computeGameStats(records), [records]);
 
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    gmRef.current?.navigateToNode(nodeId);
+  }, []);
+
   const handleMove = useCallback((from: string, to: string) => {
     gmRef.current?.playMove(`${from}${to}`);
   }, []);
@@ -142,6 +146,28 @@ export default function Home() {
       return next;
     });
   }, [fen]);
+
+  const handleExportPgn = useCallback(() => {
+    const pgnStr = PgnParser.exportAnnotatedPgn(records);
+    const blob = new Blob([pgnStr], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'chess_analysis.pgn';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [records]);
+
+  const handleImportPgn = useCallback(() => {
+    const pgn = window.prompt("Collez votre texte PGN ici :");
+    if (pgn) {
+      if (gmRef.current) {
+        gmRef.current.loadPgn(pgn);
+      }
+    }
+  }, []);
 
   return (
     <main className="flex min-h-screen items-center justify-center p-8 bg-gray-950 text-white">
@@ -164,27 +190,38 @@ export default function Home() {
               )}
             </div>
           </div>
-          {/* EvalGraph below board */}
-          <div className="w-[648px] h-[150px] shadow-2xl rounded-lg overflow-hidden border border-gray-800 p-2 bg-gray-900">
-            <EvalGraph records={records} />
+          {/* EvalGraph and KeyMoments below board */}
+          <div className="flex gap-4 w-[648px]">
+            <div className="w-full h-[150px] shadow-2xl rounded-lg overflow-hidden border border-gray-800 p-2 bg-gray-900">
+              <EvalGraph records={records} />
+            </div>
+            <div className="w-full h-[150px]">
+              <KeyMoments records={records} onNodeSelect={handleNodeSelect} />
+            </div>
           </div>
         </div>
 
         {/* Right Col: MoveList and Controls */}
         <div className="w-[300px] flex flex-col gap-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 flex justify-between items-center shadow-lg">
-            <button onClick={() => setShowReport(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors shadow flex items-center gap-2">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 flex flex-wrap gap-2 justify-between items-center shadow-lg">
+            <button onClick={() => setShowReport(true)} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center">
               <span>📊</span> Bilan
             </button>
             <button 
               onClick={toggleThreatMode}
-              className={`px-4 py-2 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 border
+              className={`px-3 py-2 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 border flex-1 justify-center
                 ${threatMode 
                   ? 'bg-red-600 text-white border-red-500' 
                   : 'bg-red-600/20 hover:bg-red-600/40 text-red-400 border-red-900/50'
                 }`}
             >
               <span>🚨</span> Menaces
+            </button>
+            <button onClick={handleExportPgn} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center" title="Exporter PGN">
+              <span>💾</span>
+            </button>
+            <button onClick={handleImportPgn} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center" title="Importer PGN">
+              <span>📂</span>
             </button>
           </div>
           <div className="h-[400px] shadow-2xl">

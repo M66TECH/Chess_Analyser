@@ -29,7 +29,9 @@ export interface MoveAnalysis {
   san: string;
 }
 
-export type MoveRecord = Omit<MoveAnalysis, 'id'>;
+export interface MoveRecord extends Omit<MoveAnalysis, 'id'> {
+  nodeId: string;
+}
 
 export interface MoveNode {
   id: string;

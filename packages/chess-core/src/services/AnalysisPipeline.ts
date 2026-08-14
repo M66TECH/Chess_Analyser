@@ -12,7 +12,7 @@ export class AnalysisPipeline {
   private moveRecords: MoveRecord[] = [];
   
   // State for the currently analyzing move
-  private pendingMove: { uci: string; san: string; fenBefore: string; fenAfter: string; color: 'white'|'black' } | null = null;
+  private pendingMove: { uci: string; san: string; fenBefore: string; fenAfter: string; color: 'white'|'black'; nodeId: string } | null = null;
   private evalBeforeMove: EngineEvaluation | null = null;
   private pedagogyDone = false;
 
@@ -33,7 +33,7 @@ export class AnalysisPipeline {
       const color = node ? node.color : 'white';
 
       // Retrieve eval BEFORE the move was played
-      let evalBefore = this.evalCache.get(fenBefore);
+      let evalBefore = await this.evalCache.get(fenBefore);
       if (!evalBefore) {
         // Fallback if not cached
         evalBefore = { depth: 0, cp: 0, pv: [] };
@@ -46,7 +46,8 @@ export class AnalysisPipeline {
         san,
         fenBefore,
         fenAfter,
-        color
+        color,
+        nodeId
       };
 
       // Emit new position
@@ -120,6 +121,7 @@ export class AnalysisPipeline {
       moveNumber,
       color,
       san,
+      nodeId: this.pendingMove.nodeId,
     };
 
     this.moveRecords.push(analysis);
