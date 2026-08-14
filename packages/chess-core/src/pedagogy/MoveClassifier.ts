@@ -1,78 +1,64 @@
 import { MoveClassification } from './types';
+import { AccuracyScore } from '../analysis/AccuracyScore';
 
 export class MoveClassifier {
   /**
-   * Converts centipawns to win probability using Lichess's formula.
-   * Returns a value between 0 (certain loss) and 1 (certain win).
+   * Classify a move based on winning chances difference (delta) on the [-1, 1] scale.
+   * Conventions: delta <= -0.3 -> Blunder, <= -0.2 -> Mistake, <= -0.1 -> Inaccuracy.
+   * Handles Mate sequences.
    */
-  public static cpToWinProb(cp: number): number {
-    const clamped = Math.max(-10000, Math.min(10000, cp));
-    return 1 / (1 + Math.exp(-0.00368208 * clamped));
-  }
-
-  /**
-   * Converts a win probability change to an accuracy score (0-100).
-   * Uses the Lichess accuracy formula.
-   */
-  public static winProbToAccuracy(winProbBefore: number, winProbAfter: number): number {
-    const probDrop = Math.max(0, winProbBefore - winProbAfter);
-    // Lichess-style accuracy: 103.1668 * exp(-0.04354 * probDrop * 100) - 3.1669
-    const accuracy = 103.1668 * Math.exp(-0.04354 * probDrop * 100) - 3.1669;
-    return Math.max(0, Math.min(100, accuracy));
-  }
-
   public static classify(
-    cpBefore: number | undefined,
-    cpAfter: number | undefined,
-    mateBefore?: number,
-    mateAfter?: number,
-    bestMoveCp?: number
-  ): {
-    classification: MoveClassification;
-    winProbBefore: number;
-    winProbAfter: number;
-    accuracy: number;
-  } {
-    // Handle mate scores
-    const effectiveCpBefore = mateBefore !== undefined
-      ? (mateBefore > 0 ? 10000 : -10000)
-      : (cpBefore ?? 0);
-    const effectiveCpAfter = mateAfter !== undefined
-      ? (mateAfter > 0 ? 10000 : -10000)
-      : (cpAfter ?? 0);
-
-    const winProbBefore = this.cpToWinProb(effectiveCpBefore);
-    const winProbAfter = this.cpToWinProb(effectiveCpAfter);
-    const accuracy = this.winProbToAccuracy(winProbBefore, winProbAfter);
-    const probDrop = winProbBefore - winProbAfter;
-
+    winDrop: number,
+    mateBefore: number | undefined,
+    mateAfter: number | undefined,
+    cpBefore: number | undefined
+  ): { classification: MoveClassification; accuracy: number } {
+    const accuracy = AccuracyScore.calculateMoveAccuracy(winDrop);
     let classification: MoveClassification = 'good';
 
-    if (probDrop < -0.1) {
-      // M3 — Win prob INCREASED significantly → brillant uniquement si pas de bestMoveCp
-      // qui prouverait que le coup n'est pas optimal selon le moteur
-      classification = bestMoveCp === undefined ? 'brilliant' : 'great';
-    } else if (probDrop < -0.02) {
-      // Win prob increased a little → great defensive or attacking find
-      classification = 'great';
-    } else if (probDrop <= 0.02) {
-      // Nearly equal to best move
-      if (bestMoveCp !== undefined && Math.abs(effectiveCpAfter - bestMoveCp) < 10) {
-        // C4 — classification 'best' maintenant accessible quand bestMoveCp est fourni
-        classification = 'best';
-      } else {
-        classification = 'excellent';
+    // Mate sequences logic
+    if (mateBefore === undefined && mateAfter !== undefined) {
+      // MateCreated (opponent is getting mated)
+      // This is evaluated based on the previous CP
+      if (cpBefore !== undefined) {
+        if (cpBefore < -999) classification = 'inaccuracy';
+        else if (cpBefore < -700) classification = 'mistake';
+        else classification = 'blunder'; // Losing a completely drawn/winning game to mate
       }
-    } else if (probDrop <= 0.05) {
-      classification = 'good';
-    } else if (probDrop <= 0.10) {
-      classification = 'inaccuracy';
-    } else if (probDrop <= 0.20) {
-      classification = 'mistake';
-    } else {
-      classification = 'blunder';
+      return { classification, accuracy };
     }
 
-    return { classification, winProbBefore, winProbAfter, accuracy };
+    if (mateBefore !== undefined && mateAfter === undefined) {
+      // MateLost (you had a forced mate and lost it)
+      classification = 'blunder'; // Simplification: losing a forced mate is generally a blunder
+      return { classification, accuracy };
+    }
+
+    if (mateBefore !== undefined && mateAfter !== undefined) {
+      // MateDelayed
+      return { classification: 'good', accuracy };
+    }
+
+    // Normal CP delta logic
+    // winDrop is positive when the player LOST winning chances.
+    // Lichess threshold uses `delta <= -X` where delta is `winAfter - winBefore` (negative means drop).
+    // So `winDrop >= 0.3` means `delta <= -0.3`.
+    if (winDrop >= 0.3) {
+      classification = 'blunder';
+    } else if (winDrop >= 0.2) {
+      classification = 'mistake';
+    } else if (winDrop >= 0.1) {
+      classification = 'inaccuracy';
+    } else if (winDrop <= -0.05) {
+      classification = 'great'; // Slight improvement in chances
+    } else if (winDrop <= -0.1) {
+      classification = 'brilliant'; // Massive improvement in chances
+    } else if (winDrop <= 0.02) {
+      classification = 'best'; // Within a very small margin
+    } else {
+      classification = 'good';
+    }
+
+    return { classification, accuracy };
   }
 }

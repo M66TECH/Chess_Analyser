@@ -16,7 +16,7 @@ export type HeatmapData = {
 import { MoveAnalysis, MoveRecord, GameAccuracy } from '../pedagogy/types';
 
 export type GameEvents = {
-  MovePlayed: { fen: string; move: string };
+  MovePlayed: { fen: string; move: string; nodeId: string };
   PositionChanged: { fen: string };
   EngineEvaluationUpdated: EngineEvaluation;
   BestMoveChanged: { move: string };
@@ -25,7 +25,7 @@ export type GameEvents = {
   MoveRecorded: MoveRecord;
   AccuracyUpdated: GameAccuracy;
   OpeningDetected: { eco: string; name: string };
-  NavigateTo: { fen: string; moveIndex: number };
+  NavigateTo: { fen: string; nodeId: string | null };
   AnalysisStarted: never;
   AnalysisFinished: never;
   // C5 — Erreur du moteur Stockfish Worker
