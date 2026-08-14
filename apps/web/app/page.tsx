@@ -11,6 +11,7 @@ export default function Home() {
   const [currentWinProb, setCurrentWinProb] = useState<number>(0);
   const [currentCp, setCurrentCp] = useState<number | undefined>(0);
   const [currentMate, setCurrentMate] = useState<number | undefined>(undefined);
+  const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
   const gmRef = useRef<GameManager | null>(null);
 
   useEffect(() => {
@@ -39,6 +40,18 @@ export default function Home() {
       setCurrentWinProb(EvalNormalizer.cpToWinningChances(normCp));
       setCurrentCp(evaluation.cp);
       setCurrentMate(evaluation.mate);
+
+      // Best move arrow
+      if (evaluation.pv.length > 0) {
+        const bestMove = evaluation.pv[0];
+        if (bestMove && bestMove.length >= 4) {
+          const orig = bestMove.substring(0, 2);
+          const dest = bestMove.substring(2, 4);
+          setShapes([{ orig, dest, brush: 'paleGreen' }]);
+        }
+      } else {
+        setShapes([]);
+      }
     });
 
     return () => {
@@ -63,6 +76,7 @@ export default function Home() {
                 fen={fen}
                 dests={dests}
                 onMove={handleMove}
+                shapes={shapes}
               />
             </div>
           </div>
