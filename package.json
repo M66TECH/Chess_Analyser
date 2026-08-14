@@ -24,5 +24,8 @@
     "@types/node": "^26.1.2",
     "turbo": "^2.10.8",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "lightningcss-linux-x64-gnu": "^1.33.0"
   }
 }

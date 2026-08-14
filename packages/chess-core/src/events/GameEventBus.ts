@@ -16,7 +16,7 @@ export type HeatmapData = {
 import { MoveAnalysis, MoveRecord, GameAccuracy } from '../pedagogy/types';
 
 export type GameEvents = {
-  MovePlayed: { fen: string; move: string; nodeId: string };
+  MovePlayed: { fenBefore: string; fenAfter: string; move: string; nodeId: string };
   PositionChanged: { fen: string };
   EngineEvaluationUpdated: EngineEvaluation;
   BestMoveChanged: { move: string };

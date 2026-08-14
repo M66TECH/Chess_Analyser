@@ -25,12 +25,14 @@ export class AnalysisPipeline {
   }
 
   private setupListeners() {
-    this.eventBus.on('MovePlayed', async ({ move }) => {
-      const fenBefore = this.moveManager.getFen();
-      const color = this.moveManager.getPosition().turn; // Color that just played
+    this.eventBus.on('MovePlayed', async ({ fenBefore, fenAfter, move, nodeId }) => {
+      // Get the node to extract SAN
+      const tree = this.moveManager.getTree();
+      const node = tree.nodes.get(nodeId);
+      const san = node ? node.san : move;
+      const color = node ? node.color : 'white';
 
       // Retrieve eval BEFORE the move was played
-      // Ideally this was computed by the engine while we were on the previous position
       let evalBefore = this.evalCache.get(fenBefore);
       if (!evalBefore) {
         // Fallback if not cached
@@ -39,35 +41,26 @@ export class AnalysisPipeline {
       this.evalBeforeMove = evalBefore;
       this.pedagogyDone = false;
 
-      const result = this.moveManager.playMove(move);
-      const fenAfter = this.moveManager.getFen();
+      this.pendingMove = {
+        uci: move,
+        san,
+        fenBefore,
+        fenAfter,
+        color
+      };
 
-      if (result.success) {
-        this.pendingMove = {
-          uci: move,
-          san: result.san ?? move,
-          fenBefore,
-          fenAfter,
-          color: color === 'white' ? 'black' : 'white' // `pos.turn` is already updated by playMove, so we invert
-        };
+      // Emit new position
+      this.eventBus.emit('PositionChanged', { fen: fenAfter });
 
-        // Emit new position
-        this.eventBus.emit('PositionChanged', { fen: fenAfter });
+      // Fetch opening asynchronously
+      OpeningExplorer.fetch(fenAfter).then(data => {
+        if (data && data.opening) {
+          this.eventBus.emit('OpeningDetected', { eco: data.opening.eco, name: data.opening.name });
+        }
+      });
 
-        // Fetch opening asynchronously
-        OpeningExplorer.fetch(fenAfter).then(data => {
-          if (data && data.opening) {
-            this.eventBus.emit('OpeningDetected', { eco: data.opening.eco, name: data.opening.name });
-          }
-        });
-
-        // Launch engine
-        // Lichess pattern: analyze the position AFTER the move.
-        // We will receive evaluations for the opponent's options.
-        this.engineManager.analyze(fenAfter, 14); // Target depth 14 for speed
-      } else {
-        this.pendingMove = null;
-      }
+      // Launch engine
+      this.engineManager.analyze(fenAfter, 14); // Target depth 14 for speed
     });
 
     this.eventBus.on('EngineEvaluationUpdated', (evaluation) => {

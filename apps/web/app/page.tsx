@@ -5,7 +5,7 @@ import { ChessBoard, EvalGraph, EvalBar, MoveList } from '@chess-analyzer/ui';
 import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer } from '@chess-analyzer/chess-core';
 
 export default function Home() {
-  const [fen, setFen] = useState('start');
+  const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [dests, setDests] = useState<Map<string, string[]>>(new Map());
   const [records, setRecords] = useState<MoveRecord[]>([]);
   const [currentWinProb, setCurrentWinProb] = useState<number>(0);

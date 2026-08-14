@@ -27,10 +27,16 @@ export class GameManager {
 
   public playMove(uci: string) {
     this.isNavigating = false;
+    const fenBefore = this.moveManager.getFen();
     const result = this.moveManager.playMove(uci);
     if (result.success && result.nodeId) {
       this.activeNodeId = result.nodeId;
-      this.eventBus.emit('MovePlayed', { fen: this.moveManager.getFen(), move: uci, nodeId: result.nodeId });
+      this.eventBus.emit('MovePlayed', { 
+        fenBefore, 
+        fenAfter: this.moveManager.getFen(), 
+        move: uci, 
+        nodeId: result.nodeId 
+      });
     }
   }
 
