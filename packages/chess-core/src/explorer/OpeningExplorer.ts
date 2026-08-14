@@ -27,15 +27,8 @@ export class OpeningExplorer {
       this.requestTimeout = setTimeout(async () => {
         try {
           // masters database is usually more theoretical
-          const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&moves=5`;
-          const token = process.env.NEXT_PUBLIC_LICHESS_TOKEN;
-          const response = await fetch(url, { 
-            signal,
-            headers: {
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-              'Accept': 'application/json'
-            }
-          });
+          const url = `/api/explorer?fen=${encodeURIComponent(fen)}&moves=5`;
+          const response = await fetch(url, { signal });
           
           if (!response.ok) {
             if (response.status === 429) {

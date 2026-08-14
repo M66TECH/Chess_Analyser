@@ -1,34 +1,11 @@
 export class GroqAPI {
-  private static keys: string[] = [];
-  private static currentIndex = 0;
-
-  private static getKeys(): string[] {
-    if (this.keys.length > 0) return this.keys;
-    const envKeys = process.env.NEXT_PUBLIC_GROQ_KEYS;
-    if (envKeys) {
-      this.keys = envKeys.split(',').map(k => k.trim()).filter(k => k.length > 0);
-    }
-    return this.keys;
-  }
-
-  private static getNextKey(): string | null {
-    const keys = this.getKeys();
-    if (keys.length === 0) return null;
-    const key = keys[this.currentIndex];
-    this.currentIndex = (this.currentIndex + 1) % keys.length;
-    return key;
-  }
-
   public static async fetchChatCompletion(prompt: string, systemPrompt: string = 'Tu es un coach d\'échecs expert et concis.'): Promise<string> {
-    const apiKey = this.getNextKey();
-    if (!apiKey) return 'Clé API non configurée.';
-    const url = 'https://api.groq.com/openai/v1/chat/completions';
+    const url = '/api/groq';
     
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -38,7 +15,7 @@ export class GroqAPI {
             { role: 'user', content: prompt }
           ],
           temperature: 0.7,
-          max_tokens: 150
+          max_tokens: 300
         })
       });
 

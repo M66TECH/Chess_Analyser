@@ -53,14 +53,8 @@ export class ExplorerService {
     try {
       // Syzygy for 7 pieces or less
       if (pieces <= 7) {
-        const url = `https://tablebase.lichess.ovh/standard?fen=${encodeURIComponent(fen)}`;
-        const token = process.env.NEXT_PUBLIC_LICHESS_TOKEN;
-        const res = await globalThis.fetch(url, {
-          headers: {
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            'Accept': 'application/json'
-          }
-        });
+        const url = `/api/tablebase?fen=${encodeURIComponent(fen)}`;
+        const res = await globalThis.fetch(url);
         if (!res.ok) return null;
         const data = await res.json();
         return {
@@ -69,14 +63,8 @@ export class ExplorerService {
         } as TablebaseData;
       } else {
         // Opening Explorer for > 7 pieces
-        const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&moves=12&topGames=0`;
-        const token = process.env.NEXT_PUBLIC_LICHESS_TOKEN;
-        const res = await globalThis.fetch(url, {
-          headers: {
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            'Accept': 'application/json'
-          }
-        });
+        const url = `/api/explorer?fen=${encodeURIComponent(fen)}&moves=12&topGames=0`;
+        const res = await globalThis.fetch(url);
         if (!res.ok) return null;
         const data = await res.json();
         return {
