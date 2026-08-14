@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments } from '@chess-analyzer/ui';
+import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble } from '@chess-analyzer/ui';
 import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser } from '@chess-analyzer/chess-core';
 import { GameEvents } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
@@ -19,6 +19,7 @@ export default function Home() {
   const [showReport, setShowReport] = useState(false);
   const [threatMode, setThreatMode] = useState(false);
   const [explorerData, setExplorerData] = useState<ExplorerResult>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const multiPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const threatPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const gmRef = useRef<GameManager | null>(null);
@@ -35,6 +36,9 @@ export default function Home() {
     eventBus.on('PedagogyUpdated', (record) => {
       setRecords(gm.getMoveRecords());
     });
+    
+    eventBus.on('MovePlayed', ({ nodeId }) => setActiveNodeId(nodeId));
+    eventBus.on('NavigateTo', ({ nodeId }) => setActiveNodeId(nodeId));
 
     eventBus.on('EngineEvaluationUpdated', (evaluation) => {
       multiPvs.current.set(evaluation.multiPv || 1, evaluation);
@@ -125,6 +129,7 @@ export default function Home() {
   }, []);
 
   const stats = useMemo(() => AccuracyScore.computeGameStats(records), [records]);
+  const activeRecord = useMemo(() => records.find(r => r.nodeId === activeNodeId), [records, activeNodeId]);
 
   const handleNodeSelect = useCallback((nodeId: string) => {
     gmRef.current?.navigateToNode(nodeId);
@@ -190,7 +195,13 @@ export default function Home() {
               )}
             </div>
           </div>
-          {/* EvalGraph and KeyMoments below board */}
+          
+          {/* CoachBubble below board */}
+          <div className="w-[648px]">
+            <CoachBubble record={activeRecord} />
+          </div>
+
+          {/* EvalGraph and KeyMoments below CoachBubble */}
           <div className="flex gap-4 w-[648px]">
             <div className="w-full h-[150px] shadow-2xl rounded-lg overflow-hidden border border-gray-800 p-2 bg-gray-900">
               <EvalGraph records={records} />

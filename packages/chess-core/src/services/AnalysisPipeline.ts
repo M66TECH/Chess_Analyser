@@ -6,6 +6,7 @@ import { MoveClassifier } from '../pedagogy/MoveClassifier';
 import { EvalCache } from '../cache/EvalCache';
 import { OpeningExplorer } from '../explorer/OpeningExplorer';
 import { MoveAnalysis, MoveRecord } from '../pedagogy/types';
+import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
 
 export class AnalysisPipeline {
   private evalCache = new EvalCache();
@@ -127,6 +128,12 @@ export class AnalysisPipeline {
     this.moveRecords.push(analysis);
     this.eventBus.emit('PedagogyUpdated', analysis);
     this.eventBus.emit('MoveRecorded', analysis);
+    
+    // Appel asynchrone à Groq pour générer l'explication sans bloquer l'UI
+    ExplanationEngine.generateExplanation(analysis).then(explanation => {
+      analysis.explanation = explanation;
+      this.eventBus.emit('PedagogyUpdated', analysis); // Re-trigger update
+    });
     
     // We don't clear pendingMove here because engine might still find deeper evals
     // But we set pedagogyDone = true to avoid repeating

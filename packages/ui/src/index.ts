@@ -5,3 +5,4 @@ export * from './MoveList';
 export * from './GameReport';
 export * from './Explorer';
 export * from './KeyMoments';
+export * from './CoachBubble';

@@ -31,6 +31,7 @@ export interface MoveAnalysis {
 
 export interface MoveRecord extends Omit<MoveAnalysis, 'id'> {
   nodeId: string;
+  explanation?: string;
 }
 
 export interface MoveNode {
