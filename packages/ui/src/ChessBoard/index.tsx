@@ -56,8 +56,15 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   lastMove,
   shapes = [],
 }) => {
-  // E4 — Mémoriser getLegalDests avec fen comme clé pour éviter le recalcul à chaque render
-  const dests = useMemo(() => getLegalDests(fen), [fen]);
+  const { dests, isCheck } = useMemo(() => {
+    let check = false;
+    try {
+      const parsed = parseFen(fen).unwrap();
+      const pos = Chess.fromSetup(parsed).unwrap();
+      check = pos.isCheck();
+    } catch {}
+    return { dests: getLegalDests(fen), isCheck: check };
+  }, [fen]);
 
   const turn: Color = fen.split(' ')[1] === 'w' ? 'white' : 'black';
   const lastMoveKeys: Key[] | undefined = lastMove
@@ -87,6 +94,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         drawable={{ enabled: true, visible: true, shapes: drawShapes }}
         animation={{ enabled: true, duration: 150 }}
         highlight={{ lastMove: true, check: true }}
+        check={isCheck}
         premovable={{ enabled: false }}
       />
     </div>
