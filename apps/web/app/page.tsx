@@ -175,74 +175,87 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-8 bg-gray-950 text-white">
-      <div className="flex gap-6 max-w-[1200px] w-full justify-center">
+    <main className="min-h-screen w-full flex items-center justify-center p-4 xl:p-8">
+      <div className="flex flex-col xl:flex-row gap-6 max-w-[1450px] w-full items-start justify-center">
         
-        {/* Left Col: EvalBar + Board */}
-        <div className="flex flex-col gap-4">
+        {/* Left Col: EvalBar + Board + KeyMoments + Graph */}
+        <div className="flex flex-col gap-6 w-full xl:w-[648px] shrink-0">
           <div className="flex gap-4 h-[600px]">
             <EvalBar winProb={currentWinProb} cp={currentCp} mate={currentMate} />
-            <div className="w-[600px] h-[600px] shadow-2xl rounded-lg overflow-hidden border border-gray-800">
+            <div className="w-[600px] h-[600px] shadow-2xl rounded-xl overflow-hidden border border-slate-800 relative ring-1 ring-white/10">
               <ChessBoard
                 fen={fen}
                 onMove={handleMove}
                 shapes={shapes}
               />
               {showReport && (
-                <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+                <div className="absolute inset-0 bg-slate-950/80 flex items-center justify-center p-4 z-50 backdrop-blur-md">
                   <GameReport stats={stats} onClose={() => setShowReport(false)} />
                 </div>
               )}
             </div>
           </div>
           
-          {/* CoachBubble below board */}
-          <div className="w-[648px]">
-            <CoachBubble record={activeRecord} />
-          </div>
-
-          {/* EvalGraph and KeyMoments below CoachBubble */}
-          <div className="flex gap-4 w-[648px]">
-            <div className="w-full h-[150px] shadow-2xl rounded-lg overflow-hidden border border-gray-800 p-2 bg-gray-900">
+          <div className="flex gap-4 w-full h-[150px]">
+            <div className="flex-1 glass-panel rounded-xl overflow-hidden p-3 relative">
               <EvalGraph records={records} />
             </div>
-            <div className="w-full h-[150px]">
+            <div className="w-[200px] shrink-0">
               <KeyMoments records={records} onNodeSelect={handleNodeSelect} />
             </div>
           </div>
         </div>
 
-        {/* Right Col: MoveList and Controls */}
-        <div className="w-[300px] flex flex-col gap-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 flex flex-wrap gap-2 justify-between items-center shadow-lg">
-            <button onClick={() => setShowReport(true)} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center">
+        {/* Middle Col: MoveList & Explorer */}
+        <div className="flex flex-col gap-6 w-full xl:w-[320px] shrink-0 h-[774px]">
+          <div className="flex-1 min-h-[400px]">
+            <MoveList 
+              records={records} 
+              activeIndex={activeRecord ? records.indexOf(activeRecord) : undefined} 
+              onNodeClick={(index) => {
+                const node = records[index];
+                if (node) handleNodeSelect(node.nodeId);
+              }} 
+            />
+          </div>
+          
+          <div className="h-[280px] glass-panel-light rounded-xl overflow-hidden relative">
+            <Explorer data={explorerData} onMoveSelect={(san) => {
+              console.log('Explorer move selected:', san);
+            }}/>
+          </div>
+        </div>
+
+        {/* Right Col: Controls & Premium CoachBubble */}
+        <div className="flex flex-col gap-6 w-full xl:w-[420px] h-[774px]">
+          {/* Controls Bar */}
+          <div className="glass-panel rounded-xl p-3 flex gap-3 justify-between items-center shrink-0">
+            <button onClick={() => setShowReport(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-all shadow-lg shadow-indigo-500/20 flex items-center gap-2 flex-1 justify-center text-white border border-indigo-400/30">
               <span>📊</span> Bilan
             </button>
             <button 
               onClick={toggleThreatMode}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 border flex-1 justify-center
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all shadow-lg flex items-center gap-2 flex-1 justify-center border
                 ${threatMode 
-                  ? 'bg-red-600 text-white border-red-500' 
-                  : 'bg-red-600/20 hover:bg-red-600/40 text-red-400 border-red-900/50'
+                  ? 'bg-red-500/20 text-red-300 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' 
+                  : 'hover:bg-slate-800/60 text-slate-300 border-slate-700/50'
                 }`}
             >
               <span>🚨</span> Menaces
             </button>
-            <button onClick={handleExportPgn} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center" title="Exporter PGN">
-              <span>💾</span>
-            </button>
-            <button onClick={handleImportPgn} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium transition-colors shadow flex items-center gap-2 flex-1 justify-center" title="Importer PGN">
-              <span>📂</span>
-            </button>
+            <div className="flex gap-2">
+              <button onClick={handleExportPgn} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors shadow-md border border-slate-700/50 flex items-center justify-center text-slate-300 hover:text-white" title="Exporter PGN">
+                <span>💾</span>
+              </button>
+              <button onClick={handleImportPgn} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors shadow-md border border-slate-700/50 flex items-center justify-center text-slate-300 hover:text-white" title="Importer PGN">
+                <span>📂</span>
+              </button>
+            </div>
           </div>
-          <div className="h-[400px] shadow-2xl">
-            <MoveList records={records} />
-          </div>
-          <div className="h-[280px] overflow-y-auto custom-scrollbar">
-            <Explorer data={explorerData} onMoveSelect={(san) => {
-              // Optionnel: on pourrait déclencher un mouvement ici s'il était légal
-              console.log('Explorer move selected:', san);
-            }}/>
+
+          {/* Huge Coach Bubble Panel */}
+          <div className="flex-1 overflow-hidden min-h-[400px]">
+            <CoachBubble record={activeRecord} />
           </div>
         </div>
 

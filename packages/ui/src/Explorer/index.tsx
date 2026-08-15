@@ -12,8 +12,8 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
   if ('isOpening' in data) {
     const d = data as OpeningData;
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl text-white text-sm w-full">
-        <h3 className="font-bold text-gray-300 mb-3 flex items-center gap-2">
+      <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-200 text-sm">
+        <h3 className="font-bold text-slate-100 mb-3 flex items-center gap-2">
           <span>📖</span> Base de données Maîtres
         </h3>
         {d.moves.length === 0 ? (

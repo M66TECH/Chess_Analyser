@@ -22,7 +22,7 @@ export const KeyMoments: React.FC<KeyMomentsProps> = ({ records, onNodeSelect })
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl text-white text-sm w-full h-full overflow-y-auto custom-scrollbar">
+    <div className="glass-panel rounded-xl p-4 w-full h-full overflow-y-auto custom-scrollbar">
       <h3 className="font-bold text-gray-300 mb-3 flex items-center gap-2">
         <span>⚡</span> Moments Clés
       </h3>

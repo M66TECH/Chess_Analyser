@@ -6,14 +6,33 @@ import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
 
 export class ExplanationEngine {
-  private static readonly SYSTEM_PROMPT = `Tu es un grand maître international d'échecs et un coach réputé.
-Ton rôle est de commenter le dernier coup joué par l'utilisateur en UNE SEULE PHRASE (10-20 mots maximum).
-RÈGLES STRICTES CONTRE LES HALLUCINATIONS :
-1. Tu ne vois pas l'échiquier. Base-toi UNIQUEMENT sur les faits fournis. Ne devine JAMAIS les pièces capturées si ce n'est pas spécifié.
-2. Si le coup est une Gaffe (Blunder) et qu'il n'y a pas de capture, dis "Tu laisses une pièce vulnérable" ou "Tu donnes l'avantage".
-3. Ne nomme les pièces que si elles sont explicitement mentionnées dans les faits.
-4. Concentre-toi sur le concept stratégique déduit de l'évaluation du moteur.
-5. Parle à la deuxième personne ("Tu").`;
+  private static readonly SYSTEM_PROMPT = `# Rôle
+Tu es ChessCoach, un entraîneur d’échecs francophone, clair, rigoureux et pédagogique.
+Ta mission est d’expliquer une analyse déjà calculée par Stockfish à un joueur humain. Tu ne remplaces pas Stockfish : tu interprètes uniquement les informations reçues.
+
+# Sources de vérité
+Les seules sources fiables sont les données JSON reçues (position FEN, coup, évaluation, meilleur coup, etc.). N’utilise aucune connaissance externe pour inventer un coup ou une tactique. Si une information n’existe pas, écris : « Les données disponibles ne permettent pas de l’affirmer. »
+
+# Règles échiquéennes obligatoires
+1. Le champ played_move.color indique obligatoirement qui a joué.
+2. Ne parle d’une pièce que si les données (moved_piece, captured_piece) le confirment.
+3. Ne dis jamais qu’un coup gagne du matériel ou force une suite sans donnée explicite.
+4. Utilise uniquement les coups fournis dans played_move et best_move.
+5. Une variation Stockfish est une illustration, explique uniquement son idée.
+
+# Niveau pédagogique
+Adapte la réponse au niveau intermédiaire (explique les plans et la sécurité du roi).
+Garde une réponse concise, claire, en utilisant le format Markdown suivant.
+
+# Format Markdown obligatoire
+## Diagnostic
+L'état de la position et le camp avantagé.
+## Le coup joué
+Qualité du coup et explication.
+## Meilleure idée
+Quel était le meilleur coup et pourquoi (si le coup joué n'était pas le meilleur).
+## À retenir
+Une leçon pratique très courte.`;
 
   private static roleToFr(role: string): string {
     const map: Record<string, string> = { pawn: 'Pion', knight: 'Cavalier', bishop: 'Fou', rook: 'Tour', queen: 'Dame', king: 'Roi' };
@@ -23,28 +42,15 @@ RÈGLES STRICTES CONTRE LES HALLUCINATIONS :
   public static async generateExplanation(record: MoveRecord): Promise<string> {
     const isWhite = record.color === 'white';
     
-    const classMap: Record<string, string> = {
-      blunder: 'Gaffe (très mauvais)',
-      mistake: 'Erreur',
-      inaccuracy: 'Imprécision',
-      good: 'Bon coup',
-      excellent: 'Excellent coup',
-      best: 'Meilleur coup',
-      great: 'Superbe coup',
-      brilliant: 'Coup brillant !',
-      book: 'Coup théorique'
-    };
-    const classificationFr = classMap[record.classification] || 'Coup normal';
-
-    let movedPiece = 'Une pièce';
-    let capturedPiece = '';
+    let movedPiece = 'Inconnu';
+    let capturedPiece = null;
 
     try {
       if (record.fenBefore) {
         const setup = parseFen(record.fenBefore).unwrap();
         const pos = Chess.fromSetup(setup).unwrap();
         const move = parseSan(pos, record.san);
-        if (move) {
+        if (move && 'from' in move) {
           const fromPiece = pos.board.get(move.from);
           if (fromPiece) movedPiece = this.roleToFr(fromPiece.role);
           
@@ -56,31 +62,33 @@ RÈGLES STRICTES CONTRE LES HALLUCINATIONS :
           }
         }
       }
-    } catch (e) {
-      console.error('Erreur de parsing chessops pour Llama 3', e);
-    }
+    } catch (e) {}
 
-    const isCheck = record.san.includes('+');
+    // Préparation des données JSON strictes pour le prompt
+    const contextData = {
+      fen_before: record.fenBefore,
+      played_move: {
+        san: record.san,
+        color: record.color,
+        moved_piece: movedPiece,
+        captured_piece: capturedPiece,
+        is_check: record.san.includes('+')
+      },
+      side_to_move_after: isWhite ? 'black' : 'white',
+      evaluation_before: record.cpBefore !== undefined ? (record.cpBefore / 100).toFixed(2) : null,
+      evaluation_after: record.cpAfter !== undefined ? (record.cpAfter / 100).toFixed(2) : null,
+      evaluation_loss_cp: (record.cpBefore !== undefined && record.cpAfter !== undefined) ? Math.abs(record.cpAfter - record.cpBefore) : null,
+      move_classification: record.classification,
+      best_move: record.bestMove || null,
+      player_level: 'intermédiaire'
+    };
 
-    let prompt = `Voici les FAITS MATHÉMATIQUES EXACTS de la position :\n`;
-    prompt += `- Le joueur a joué : ${record.san}\n`;
-    prompt += `- Ce coup déplace : ${movedPiece}\n`;
-    if (capturedPiece) prompt += `- Ce coup CAPTURE : ${capturedPiece} adverse.\n`;
-    if (isCheck) prompt += `- Ce coup met le roi adverse en ÉCHEC.\n`;
-    
-    if (record.cpBefore !== undefined && record.cpAfter !== undefined) {
-      const evalBefore = (record.cpBefore / 100).toFixed(1);
-      const evalAfter = (record.cpAfter / 100).toFixed(1);
-      prompt += `- L'évaluation Stockfish passe de ${evalBefore} à ${evalAfter} (différence de ${(record.cpAfter - record.cpBefore) / 100} points).\n`;
-    }
+    const prompt = `Analyse cette position en respectant STRICTEMENT ton System Prompt et le format Markdown attendu.
 
-    prompt += `- Classification du coup : ${classificationFr}.\n`;
-
-    if (record.bestMove && record.classification !== 'best' && record.classification !== 'book') {
-      prompt += `- Stockfish recommandait plutôt de jouer : ${record.bestMove}.\n`;
-    }
-
-    prompt += `\nConsigne : Rédige ton analyse courte (une seule phrase dynamique) à partir de ces FAITS uniquement. Ne mentionne pas de pièces qui ne sont pas listées ci-dessus. :`;
+DONNÉES JSON :
+\`\`\`json
+${JSON.stringify(contextData, null, 2)}
+\`\`\``;
 
     return await GroqAPI.fetchChatCompletion(prompt, this.SYSTEM_PROMPT);
   }

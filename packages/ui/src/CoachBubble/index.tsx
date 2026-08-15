@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MoveRecord } from '@chess-analyzer/chess-core';
+import ReactMarkdown from 'react-markdown';
 
 export interface CoachBubbleProps {
   record?: MoveRecord;
@@ -8,45 +9,54 @@ export interface CoachBubbleProps {
 export const CoachBubble: React.FC<CoachBubbleProps> = ({ record }) => {
   if (!record) {
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl text-white w-full h-[120px] flex items-center justify-center text-sm text-gray-500">
-        Le coach Llama 3 est prêt à commenter vos coups.
+      <div className="glass-panel rounded-xl p-6 w-full h-[300px] flex flex-col items-center justify-center text-center">
+        <div className="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
+          <span className="text-3xl">🤖</span>
+        </div>
+        <h2 className="text-xl font-bold text-slate-200 mb-2">Coach IA prêt</h2>
+        <p className="text-sm text-slate-400 max-w-sm">
+          Le Grand Maître Llama 3 analysera vos coups avec une précision chirurgicale. Jouez un coup pour commencer !
+        </p>
       </div>
     );
   }
 
   const { explanation, classification, san, color, moveNumber } = record;
-  const who = color === 'white' ? 'Blancs' : 'Noirs';
 
-  // Couleurs dynamiques selon la classification
-  let titleColor = 'text-gray-300';
-  let badgeClass = 'bg-gray-800 border-gray-600';
+  let titleColor = 'text-slate-300';
+  let badgeClass = 'bg-slate-800 border-slate-600';
+  let glowClass = '';
   
   switch (classification) {
     case 'blunder':
-      titleColor = 'text-red-500';
-      badgeClass = 'bg-red-900/40 border-red-500 text-red-200';
+      titleColor = 'text-red-400';
+      badgeClass = 'bg-red-500/20 border-red-500/50 text-red-200';
+      glowClass = 'shadow-[0_0_15px_rgba(239,68,68,0.3)]';
       break;
     case 'mistake':
-      titleColor = 'text-orange-500';
-      badgeClass = 'bg-orange-900/40 border-orange-500 text-orange-200';
+      titleColor = 'text-orange-400';
+      badgeClass = 'bg-orange-500/20 border-orange-500/50 text-orange-200';
+      glowClass = 'shadow-[0_0_15px_rgba(249,115,22,0.3)]';
       break;
     case 'inaccuracy':
-      titleColor = 'text-blue-400';
-      badgeClass = 'bg-blue-900/40 border-blue-400 text-blue-200';
+      titleColor = 'text-yellow-400';
+      badgeClass = 'bg-yellow-400/20 border-yellow-400/50 text-yellow-200';
+      glowClass = 'shadow-[0_0_15px_rgba(250,204,21,0.3)]';
       break;
     case 'good':
       titleColor = 'text-green-400';
-      badgeClass = 'bg-green-900/40 border-green-500 text-green-200';
+      badgeClass = 'bg-green-500/20 border-green-500/50 text-green-200';
       break;
     case 'excellent':
       titleColor = 'text-teal-400';
-      badgeClass = 'bg-teal-900/40 border-teal-500 text-teal-200';
+      badgeClass = 'bg-teal-400/20 border-teal-400/50 text-teal-200';
       break;
     case 'best':
     case 'great':
     case 'brilliant':
-      titleColor = 'text-yellow-400';
-      badgeClass = 'bg-yellow-900/40 border-yellow-500 text-yellow-200';
+      titleColor = 'text-indigo-400';
+      badgeClass = 'bg-indigo-500/30 border-indigo-500/50 text-indigo-200';
+      glowClass = 'shadow-[0_0_20px_rgba(99,102,241,0.4)]';
       break;
   }
 
@@ -66,23 +76,38 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record }) => {
   };
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl text-white w-full h-[120px] flex flex-col justify-between">
-      <div className="flex justify-between items-center mb-2">
-        <h3 className={`font-bold text-sm ${titleColor} flex items-center gap-2`}>
-          <span>🤖</span> Coach Groq (Llama 3.3)
-        </h3>
-        <span className={`text-xs px-2 py-0.5 rounded border ${badgeClass}`}>
-          {Math.floor(moveNumber)}{color === 'white' ? '.' : '...'} {san} — {formatClassification(classification)}
-        </span>
+    <div className="glass-panel rounded-xl p-0 w-full h-[400px] flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="bg-slate-900/80 px-5 py-4 border-b border-slate-700/50 flex justify-between items-center backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-500/20 rounded-full flex items-center justify-center shadow-lg border border-indigo-500/30">
+            <span className="text-xl">🤖</span>
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-100 leading-tight">Coach Llama 3</h3>
+            <span className="text-xs text-indigo-300">Grand Maître IA</span>
+          </div>
+        </div>
+        
+        <div className={'flex flex-col items-end'}>
+          <span className="text-xs text-slate-400 mb-1">Coup joué : {Math.floor(moveNumber)}{color === 'white' ? '.' : '...'} {san}</span>
+          <span className={`text-xs px-2.5 py-1 rounded-md border font-bold uppercase tracking-wider ${badgeClass} ${glowClass}`}>
+            {formatClassification(classification)}
+          </span>
+        </div>
       </div>
       
-      <div className="text-sm flex-1 overflow-y-auto custom-scrollbar italic text-gray-300">
+      {/* Scrollable Content */}
+      <div className="p-5 flex-1 overflow-y-auto custom-scrollbar">
         {explanation ? (
-          `« ${explanation} »`
+          <div className="text-slate-300 text-sm leading-relaxed prose prose-invert prose-headings:text-indigo-300 prose-h2:text-base prose-h2:mb-2 prose-h2:mt-4 prose-p:mb-4 max-w-none">
+            <ReactMarkdown>{explanation}</ReactMarkdown>
+          </div>
         ) : (
-          <span className="flex items-center gap-2 text-gray-500">
-            <span className="animate-pulse">●</span> Analyse en cours...
-          </span>
+          <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
+            <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="animate-pulse text-sm">Le Coach réfléchit profondément...</span>
+          </div>
         )}
       </div>
     </div>
