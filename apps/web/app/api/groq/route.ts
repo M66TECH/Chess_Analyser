@@ -39,8 +39,8 @@ export async function POST(request: Request) {
 
     const data = await res.json();
     return NextResponse.json(data);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Groq Proxy Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal Server Error', stack: error.stack }, { status: 500 });
   }
 }

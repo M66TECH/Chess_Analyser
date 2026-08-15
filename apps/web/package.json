@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "nodemon -w next.config.ts -x \"next dev\"",
+    "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' nodemon -w next.config.ts -w .env.local -x \"next dev\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
