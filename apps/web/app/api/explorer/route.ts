@@ -30,8 +30,10 @@ export async function GET(request: Request) {
 
     const data = await res.json();
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Proxy Fetch Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error', stack: error.stack }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    const stack = error instanceof Error ? error.stack : undefined;
+    return NextResponse.json({ error: message, stack }, { status: 500 });
   }
 }

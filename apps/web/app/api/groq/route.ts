@@ -3,7 +3,10 @@ import { NextResponse } from 'next/server';
 let currentIndex = 0;
 
 function getNextGroqKey(): string | null {
-  const envKeys = process.env.GROQ_KEYS || process.env.NEXT_PUBLIC_GROQ_KEYS;
+  const envKeys =
+    process.env.GROQ_KEYS ||
+    process.env.GROQ_API_KEYS ||
+    process.env.NEXT_PUBLIC_GROQ_KEYS;
   if (!envKeys) return null;
   const keys = envKeys.split(',').map(k => k.trim()).filter(k => k.length > 0);
   if (keys.length === 0) return null;
@@ -39,8 +42,10 @@ export async function POST(request: Request) {
 
     const data = await res.json();
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Groq Proxy Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error', stack: error.stack }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    const stack = error instanceof Error ? error.stack : undefined;
+    return NextResponse.json({ error: message, stack }, { status: 500 });
   }
 }

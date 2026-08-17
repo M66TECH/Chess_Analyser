@@ -19,3 +19,7 @@ venv.bak/
 # MacOS
 .DS_Store
 .env*
+
+# Fichiers locaux avec secrets / notes personnelles
+cle API.txt
+audit .txt

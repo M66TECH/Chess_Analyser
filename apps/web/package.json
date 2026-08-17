@@ -6,7 +6,7 @@
     "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' nodemon -w next.config.ts -w .env.local -x \"next dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "NODE_OPTIONS='--max-old-space-size=3072' eslint"
   },
   "dependencies": {
     "@chess-analyzer/chess-core": "*",

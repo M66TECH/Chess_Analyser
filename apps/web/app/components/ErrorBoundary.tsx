@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
         >
           <div style={{ fontSize: '2rem' }}>⚠️</div>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
-            Une erreur inattendue s'est produite
+            Une erreur inattendue s&apos;est produite
           </h2>
           <p style={{ fontSize: '0.8rem', color: '#64748b', textAlign: 'center', maxWidth: 400 }}>
             {this.state.error?.message ?? 'Erreur inconnue'}
