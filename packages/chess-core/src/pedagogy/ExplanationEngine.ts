@@ -1,5 +1,6 @@
 import { MoveRecord } from './types';
 import { GroqAPI } from './GroqAPI';
+import { uciToSan } from '../utils/san';
 
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -17,8 +18,9 @@ Les seules sources fiables sont les données JSON reçues (position FEN, coup, �
 1. Le champ played_move.color indique obligatoirement qui a joué.
 2. Ne parle d’une pièce que si les données (moved_piece, captured_piece) le confirment.
 3. Ne dis jamais qu’un coup gagne du matériel ou force une suite sans donnée explicite.
-4. Utilise uniquement les coups fournis dans played_move et best_move.
+4. Utilise uniquement les coups fournis dans played_move.san et best_move.san (notation SAN).
 5. Une variation Stockfish est une illustration, explique uniquement son idée.
+6. Les évaluations evaluation_before / evaluation_after sont exprimées en pions du point de vue des Blancs : positif = avantage des Blancs, négatif = avantage des Noirs. Si le coup a été joué par les Noirs, interprète les signes en conséquence (ne dis pas que les Blancs sont avantagés quand les chiffres favorisent en réalité le camp joué).
 
 # Niveau pédagogique
 Adapte la réponse au niveau intermédiaire (explique les plans et la sécurité du roi).
@@ -62,9 +64,19 @@ Une leçon pratique très courte.`;
           }
         }
       }
-    } catch (e) {}
+    } catch {}
 
     // Préparation des données JSON strictes pour le prompt
+    const isCheck = /[+#]$/.test(record.san);
+    const bestMoveSan = record.bestMove ? uciToSan(record.fenBefore, record.bestMove) : null;
+    // Perte de chances exprimée du point de vue du joueur qui vient de jouer
+    const playerLossCp =
+      record.cpBefore !== undefined && record.cpAfter !== undefined
+        ? record.color === 'white'
+          ? Math.max(0, record.cpBefore - record.cpAfter)
+          : Math.max(0, record.cpAfter - record.cpBefore)
+        : null;
+
     const contextData = {
       fen_before: record.fenBefore,
       played_move: {
@@ -72,14 +84,19 @@ Une leçon pratique très courte.`;
         color: record.color,
         moved_piece: movedPiece,
         captured_piece: capturedPiece,
-        is_check: record.san.includes('+')
+        is_check: isCheck,
       },
+      side_to_move_before: record.color,
       side_to_move_after: isWhite ? 'black' : 'white',
+      // POV Blanc : positif = avantage Blancs
       evaluation_before: record.cpBefore !== undefined ? (record.cpBefore / 100).toFixed(2) : null,
       evaluation_after: record.cpAfter !== undefined ? (record.cpAfter / 100).toFixed(2) : null,
-      evaluation_loss_cp: (record.cpBefore !== undefined && record.cpAfter !== undefined) ? Math.abs(record.cpAfter - record.cpBefore) : null,
+      player_loss_cp: playerLossCp,
       move_classification: record.classification,
-      best_move: record.bestMove || null,
+      best_move: {
+        san: bestMoveSan,
+        uci: record.bestMove || null,
+      },
       player_level: 'intermédiaire'
     };
 

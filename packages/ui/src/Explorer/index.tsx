@@ -1,9 +1,14 @@
 import React from 'react';
 import type { ExplorerResult, OpeningData, TablebaseData } from '@chess-analyzer/chess-core';
 
+export interface ExplorerMoveSelection {
+  san: string;
+  uci: string;
+}
+
 export interface ExplorerProps {
   data: ExplorerResult;
-  onMoveSelect?: (san: string) => void;
+  onMoveSelect?: (move: ExplorerMoveSelection) => void;
 }
 
 export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
@@ -27,7 +32,7 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
               const bPct = (move.black / total) * 100;
 
               return (
-                <div key={move.uci} className="flex items-center gap-3 hover:bg-gray-800 p-1 rounded cursor-pointer transition-colors" onClick={() => onMoveSelect?.(move.san)}>
+                <div key={move.uci} className="flex items-center gap-3 hover:bg-gray-800 p-1 rounded cursor-pointer transition-colors" onClick={() => onMoveSelect?.({ san: move.san, uci: move.uci })}>
                   <div className="w-12 font-medium text-gray-200">{move.san}</div>
                   <div className="w-16 text-right text-xs text-gray-400">{total.toLocaleString()}</div>
                   <div className="flex-1 h-2 flex rounded overflow-hidden opacity-90">
@@ -78,7 +83,7 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
               }
 
               return (
-                <div key={move.uci} className="flex justify-between items-center hover:bg-gray-800 p-2 rounded cursor-pointer transition-colors" onClick={() => onMoveSelect?.(move.san)}>
+                <div key={move.uci} className="flex justify-between items-center hover:bg-gray-800 p-2 rounded cursor-pointer transition-colors" onClick={() => onMoveSelect?.({ san: move.san, uci: move.uci })}>
                   <span className="font-medium w-16">{move.san}</span>
                   <span className={`flex-1 text-right font-medium ${color}`}>{dtzText}</span>
                 </div>

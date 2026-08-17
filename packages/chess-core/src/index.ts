@@ -15,3 +15,4 @@ export * from './cache/EvalCache';
 export * from './parser/PgnParser';
 export * from './pedagogy/GroqAPI';
 export * from './pedagogy/ExplanationEngine';
+export * from './utils/san';

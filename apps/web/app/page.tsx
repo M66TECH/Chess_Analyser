@@ -2,15 +2,14 @@
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble } from '@chess-analyzer/ui';
-import { GameManager, GameEventBus, EngineManager, MoveManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser } from '@chess-analyzer/chess-core';
-import { GameEvents } from '@chess-analyzer/chess-core/src/events/GameEventBus';
+import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser } from '@chess-analyzer/chess-core';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
 
 export default function Home() {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-  const [dests, setDests] = useState<Map<string, string[]>>(new Map());
+  const initialFenRef = useRef(fen);
   const [records, setRecords] = useState<MoveRecord[]>([]);
   const [currentWinProb, setCurrentWinProb] = useState<number>(0);
   const [currentCp, setCurrentCp] = useState<number | undefined>(0);
@@ -33,7 +32,7 @@ export default function Home() {
       setFen(fen);
     });
 
-    eventBus.on('PedagogyUpdated', (record) => {
+    eventBus.on('PedagogyUpdated', () => {
       setRecords(gm.getMoveRecords());
     });
     
@@ -45,7 +44,9 @@ export default function Home() {
 
       // We only update the main eval when we receive the primary PV (multipv 1)
       if (!evaluation.multiPv || evaluation.multiPv === 1) {
-        const normCp = EvalNormalizer.normalize(evaluation.cp, evaluation.mate);
+        const currentFen = gmRef.current ? gmRef.current['moveManager'].getFen() : initialFenRef.current;
+        const turn = currentFen.split(' ')[1] === 'w' ? 'white' : 'black';
+        const normCp = EvalNormalizer.normalize(evaluation.cp, evaluation.mate, turn);
         setCurrentWinProb(EvalNormalizer.cpToWinningChances(normCp));
         setCurrentCp(evaluation.cp);
         setCurrentMate(evaluation.mate);
@@ -91,7 +92,7 @@ export default function Home() {
           const rank = Math.floor(p.pinned / 8) + 1;
           newShapes.push({ orig: `${file}${rank}`, brush: 'blue' });
         });
-      } catch (e) {
+      } catch {
         // silently ignore parse errors during fast updates
       }
 
@@ -220,8 +221,8 @@ export default function Home() {
           </div>
           
           <div className="h-[280px] glass-panel-light rounded-xl overflow-hidden relative">
-            <Explorer data={explorerData} onMoveSelect={(san) => {
-              console.log('Explorer move selected:', san);
+            <Explorer data={explorerData} onMoveSelect={(move) => {
+              if (move && move.uci) gmRef.current?.playMove(move.uci);
             }}/>
           </div>
         </div>

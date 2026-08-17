@@ -12,37 +12,44 @@ export class EvalNormalizer {
   }
 
   /**
-   * Converts a mate score (number of moves to mate) to an equivalent centipawn value.
+   * Converts a mate score (number of moves to mate) to an equivalent centipawn value
+   * expressed from White's perspective.
    * Lichess formula: (21 - min(10, |mate|)) * 100
-   * Positive mate means White is mating.
+   * UCI convention: `score mate +N` means the side to move delivers mate in N moves.
+   * @param mate Mate score from the side-to-move's perspective (positive = that side mates)
+   * @param sideToMove The color that is to move in the analyzed position
    */
-  public static mateToCp(mate: number): number {
+  public static mateToCp(mate: number, sideToMove: 'white' | 'black'): number {
     if (mate === 0) return 0;
     const absMate = Math.abs(mate);
     const cp = (21 - Math.min(10, absMate)) * 100;
-    return mate > 0 ? cp : -cp;
+    const whiteAdvantage = sideToMove === 'white' ? mate > 0 : mate < 0;
+    return whiteAdvantage ? cp : -cp;
   }
 
   /**
    * Returns the normalized CP score (from White's perspective).
+   * @param sideToMove The color that is to move in the position this eval belongs to
    */
-  public static normalize(cp: number | undefined, mate: number | undefined): number {
+  public static normalize(cp: number | undefined, mate: number | undefined, sideToMove: 'white' | 'black' = 'white'): number {
     if (mate !== undefined) {
-      return this.mateToCp(mate);
+      return this.mateToCp(mate, sideToMove);
     }
     return cp ?? 0;
   }
 
   /**
-   * Calculates the difference in winning chances between two evaluations,
-   * ALWAYS from the perspective of the player who just moved.
+   * Calculates the winning chances DROPPED by the player who just moved.
+   * Positive = the player LOST winning chances (bad move), negative = gained (good move).
    * @param cpBefore CP score BEFORE the move (White's POV)
    * @param cpAfter CP score AFTER the move (White's POV)
    * @param color The color of the player who played the move
    */
   public static winningChancesDiff(cpBefore: number, cpAfter: number, color: 'white' | 'black'): number {
-    let diff = this.cpToWinningChances(cpAfter) - this.cpToWinningChances(cpBefore);
-    // If black played, an increase in White's POV CP is a negative diff for Black.
-    return color === 'white' ? diff : -diff;
+    const whiteBefore = this.cpToWinningChances(cpBefore);
+    const whiteAfter = this.cpToWinningChances(cpAfter);
+    // For White: drop = chances before − chances after.
+    // For Black: Black's chances are the mirror of White's (whiteAfter − whiteBefore is Black's drop).
+    return color === 'white' ? whiteBefore - whiteAfter : whiteAfter - whiteBefore;
   }
 }

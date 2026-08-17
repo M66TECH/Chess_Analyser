@@ -1,3 +1,5 @@
+import { MoveRecord, GameStats } from '../pedagogy/types';
+
 export class AccuracyScore {
   /**
    * Calculates the accuracy of a single move based on the drop in winning chances.
@@ -15,11 +17,11 @@ export class AccuracyScore {
     // Let's assume winDrop is already scaled to percentage loss (e.g. 0.1 drop = 10).
     const winDiff = winDrop * 100; 
     
-    let accuracy = 103.1668 * Math.exp(-0.043544 * winDiff) - 3.166925 + 1;
+    const accuracy = 103.1668 * Math.exp(-0.043544 * winDiff) - 3.166925 + 1;
     return Math.max(0, Math.min(100, accuracy));
   }
 
-  public static computeGameStats(records: any[]): any {
+  public static computeGameStats(records: MoveRecord[]): GameStats {
     const stats = {
       accuracy: { white: 100, black: 100 },
       acpl: { white: 0, black: 0 },

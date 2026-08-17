@@ -37,10 +37,12 @@ const getBadgeText = (classification: MoveClassification) => {
 export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNodeClick }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   
+  type MoveRow = { moveNumber: number; white?: MoveRecord; black?: MoveRecord; whiteIndex?: number; blackIndex?: number };
+
   // Group records by move number
-  const rows: { moveNumber: number; white?: MoveRecord; black?: MoveRecord; whiteIndex?: number; blackIndex?: number }[] = [];
+  const rows: MoveRow[] = [];
   
-  let currentRow: any = null;
+  let currentRow: MoveRow | null = null;
   
   records.forEach((record, index) => {
     if (record.color === 'white') {

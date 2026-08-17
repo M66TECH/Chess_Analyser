@@ -3,6 +3,7 @@ import { MoveManager } from '../services/MoveManager';
 import { EngineManager } from '../engine/EngineManager';
 import { AnalysisPipeline } from '../services/AnalysisPipeline';
 import { PgnParser } from '../parser/PgnParser';
+import { MoveNode } from '../pedagogy/types';
 
 export class GameManager {
   public eventBus: GameEventBus;
@@ -117,10 +118,6 @@ export class GameManager {
     return this.activeNodeId;
   }
 
-  public setLanguageLevel(level: 'beginner' | 'intermediate' | 'advanced') {
-    // To be re-implemented
-  }
-
   public resetGame() {
     this.pipeline.reset();
     this.moveManager.reset();
@@ -134,7 +131,7 @@ export class GameManager {
     this.engineManager.analyze(startFen, 14);
   }
 
-  public loadPgn(pgnText: string): { success: boolean; error?: string; moveCount?: number } {
+  public async loadPgn(pgnText: string): Promise<{ success: boolean; error?: string; moveCount?: number }> {
     const result = PgnParser.parse(pgnText);
     if (!result.success) {
       return { success: false, error: result.error };
@@ -148,27 +145,26 @@ export class GameManager {
     this.isNavigating = false;
 
     // Rejouer tous les coups silencieusement
-    let loadedCount = 0;
-    let lastNodeId: string | null = null;
+    const nodes: MoveNode[] = [];
     for (const uci of result.moves) {
       const playResult = this.moveManager.playMove(uci);
       if (!playResult.success) {
-        console.warn(`[GameManager.loadPgn] Coup illégal à l'index ${loadedCount}: ${uci}`);
+        console.warn(`[GameManager.loadPgn] Coup illégal à l'index ${nodes.length}: ${uci}`);
         break;
       }
-      lastNodeId = playResult.nodeId ?? null;
-      loadedCount++;
+      const node = playResult.nodeId ? this.moveManager.getTree().nodes.get(playResult.nodeId) : null;
+      if (node) nodes.push(node);
+      this.activeNodeId = playResult.nodeId ?? this.activeNodeId;
     }
-    
-    this.activeNodeId = lastNodeId;
 
-    // Émettre les événements de position finale
+    // Émettre l'événement de position finale
     const finalFen = this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: finalFen });
 
+    // Analyser chaque position séquentiellement (records/coach/graphe)
+    await this.pipeline.analyzeGame(nodes);
 
-
-    return { success: true, moveCount: loadedCount };
+    return { success: true, moveCount: nodes.length };
   }
 
   public terminate() {

@@ -41,8 +41,8 @@ export class OpeningExplorer {
           const data: OpeningData = await response.json();
           this.cache.set(fen, data);
           resolve(data);
-        } catch (error: any) {
-          if (error.name !== 'AbortError') {
+        } catch (error: unknown) {
+          if (error instanceof Error && error.name !== 'AbortError') {
             console.error('Lichess Explorer error:', error);
           }
           resolve(null);

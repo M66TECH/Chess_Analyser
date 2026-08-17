@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MoveRecord } from '@chess-analyzer/chess-core';
+import { uciToSan } from '@chess-analyzer/chess-core';
 
 export interface KeyMomentsProps {
   records: MoveRecord[];
@@ -51,7 +52,7 @@ export const KeyMoments: React.FC<KeyMomentsProps> = ({ records, onNodeSelect })
                 </span>
               </div>
               <div className="text-gray-300 text-xs">
-                Gaffe des {who}. Meilleur coup : <span className="font-bold">{moment.bestMove || 'Inconnu'}</span>
+                Gaffe des {who}. Meilleur coup : <span className="font-bold">{moment.bestMove ? (uciToSan(moment.fenBefore, moment.bestMove) ?? moment.bestMove) : 'Inconnu'}</span>
               </div>
             </div>
           );

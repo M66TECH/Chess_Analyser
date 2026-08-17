@@ -4,6 +4,7 @@ export type EngineEvaluation = {
   mate?: number;
   pv: string[];
   multiPv?: number;
+  fen?: string;
 };
 
 export type HeatmapData = {
@@ -13,7 +14,7 @@ export type HeatmapData = {
   };
 };
 
-import { MoveAnalysis, MoveRecord, GameStats } from '../pedagogy/types';
+import { MoveRecord, GameStats } from '../pedagogy/types';
 
 export type GameEvents = {
   MovePlayed: { fenBefore: string; fenAfter: string; move: string; nodeId: string };
@@ -36,8 +37,10 @@ export type GameEvents = {
 
 type EventHandler<T> = (data: T) => void;
 
+type AnyHandler = (data: never) => void;
+
 export class GameEventBus {
-  private listeners: Map<keyof GameEvents, Function[]> = new Map();
+  private listeners: Map<keyof GameEvents, AnyHandler[]> = new Map();
 
   public on<K extends keyof GameEvents>(event: K, handler: EventHandler<GameEvents[K]>) {
     if (!this.listeners.has(event)) {
@@ -58,7 +61,7 @@ export class GameEventBus {
     if (!this.listeners.has(event)) return;
     for (const handler of this.listeners.get(event)!) {
       try {
-        handler(data);
+        (handler as EventHandler<GameEvents[K]>)(data);
       } catch (err) {
         console.error(`[GameEventBus] Error in handler for "${event}":`, err);
       }

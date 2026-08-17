@@ -38,13 +38,14 @@ export class EvalCache {
   }
 
   /**
-   * Normalizes a FEN by removing the halfmove and fullmove counters,
-   * so that functionally identical positions share the same cache entry.
+   * Normalizes a FEN by removing the fullmove counter only, so that functionally
+   * identical positions share the same cache entry. The halfmove counter is kept
+   * to avoid conflating positions that differ by the 50-move rule (3-fold, etc.).
    */
   public normalizeFen(fen: string): string {
     const parts = fen.split(' ');
-    // Keep pieces, turn, castling, en passant (first 4 parts)
-    return parts.slice(0, 4).join(' ');
+    // Keep pieces, turn, castling, en passant and halfmove clock (first 5 parts)
+    return parts.slice(0, 5).join(' ');
   }
 
   public async get(fen: string): Promise<EngineEvaluation | undefined> {
@@ -67,7 +68,7 @@ export class EvalCache {
           resolve(undefined);
         };
       });
-    } catch (e) {
+    } catch {
       return undefined;
     }
   }

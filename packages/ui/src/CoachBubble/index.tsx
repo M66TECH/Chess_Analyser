@@ -23,38 +23,31 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record }) => {
 
   const { explanation, classification, san, color, moveNumber } = record;
 
-  let titleColor = 'text-slate-300';
   let badgeClass = 'bg-slate-800 border-slate-600';
   let glowClass = '';
   
   switch (classification) {
     case 'blunder':
-      titleColor = 'text-red-400';
       badgeClass = 'bg-red-500/20 border-red-500/50 text-red-200';
       glowClass = 'shadow-[0_0_15px_rgba(239,68,68,0.3)]';
       break;
     case 'mistake':
-      titleColor = 'text-orange-400';
       badgeClass = 'bg-orange-500/20 border-orange-500/50 text-orange-200';
       glowClass = 'shadow-[0_0_15px_rgba(249,115,22,0.3)]';
       break;
     case 'inaccuracy':
-      titleColor = 'text-yellow-400';
       badgeClass = 'bg-yellow-400/20 border-yellow-400/50 text-yellow-200';
       glowClass = 'shadow-[0_0_15px_rgba(250,204,21,0.3)]';
       break;
     case 'good':
-      titleColor = 'text-green-400';
       badgeClass = 'bg-green-500/20 border-green-500/50 text-green-200';
       break;
     case 'excellent':
-      titleColor = 'text-teal-400';
       badgeClass = 'bg-teal-400/20 border-teal-400/50 text-teal-200';
       break;
     case 'best':
     case 'great':
     case 'brilliant':
-      titleColor = 'text-indigo-400';
       badgeClass = 'bg-indigo-500/30 border-indigo-500/50 text-indigo-200';
       glowClass = 'shadow-[0_0_20px_rgba(99,102,241,0.4)]';
       break;

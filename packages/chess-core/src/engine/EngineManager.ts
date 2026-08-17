@@ -7,6 +7,7 @@ export class EngineManager {
   private pendingFen: string | null = null;
   private pendingDepth: number = 18;
   private isThreatMode: boolean = false;
+  private currentAnalysisFen: string | null = null;
 
   constructor(
     private eventBus: GameEventBus,
@@ -75,6 +76,9 @@ export class EngineManager {
 
     const evaluation = EngineParser.parseUciInfo(msg);
     if (evaluation) {
+      // Tag the evaluation with the FEN the engine was asked to analyze, so the
+      // pipeline can discard stale evaluations (race navigation/rapide play).
+      evaluation.fen = this.currentAnalysisFen ?? undefined;
       if (this.isThreatMode) {
         this.eventBus.emit('ThreatEvaluationUpdated', evaluation);
       } else {
@@ -85,6 +89,7 @@ export class EngineManager {
 
   public analyze(fen: string, depth: number = 14) {
     this.isThreatMode = false;
+    this.currentAnalysisFen = fen;
     if (!this.isReady || !this.worker) {
       this.pendingFen = fen;
       this.pendingDepth = depth;
@@ -109,6 +114,7 @@ export class EngineManager {
       // Erase en passant since we skip a move
       parts[3] = '-';
       const threatFen = parts.join(' ');
+      this.currentAnalysisFen = threatFen;
       this.worker.postMessage(`position fen ${threatFen}`);
       this.worker.postMessage(`go depth ${depth}`);
       this.eventBus.emit('ThreatAnalysisStarted', undefined as never);

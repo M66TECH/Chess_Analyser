@@ -93,7 +93,6 @@ export class PgnParser {
     pgn += `[Date "${date}"]\n`;
     pgn += '[Round "-"]\n[White "White"]\n[Black "Black"]\n[Result "*"]\n\n';
 
-    let currentMoveNum = 1;
     let line = '';
 
     for (let i = 0; i < records.length; i++) {
