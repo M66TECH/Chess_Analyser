@@ -55,4 +55,6 @@ export interface GameStats {
   blunders: { white: number; black: number };
   mistakes: { white: number; black: number };
   inaccuracies: { white: number; black: number };
+  perfectDomination?: { white: boolean; black: boolean };
+  queensTraded?: boolean;
 }

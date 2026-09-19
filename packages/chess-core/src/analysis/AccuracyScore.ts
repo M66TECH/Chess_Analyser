@@ -61,6 +61,25 @@ export class AccuracyScore {
     stats.acpl.white = wCount > 0 ? Math.round(wCpSum / wCount) : 0;
     stats.acpl.black = bCount > 0 ? Math.round(bCpSum / bCount) : 0;
 
+    if (records.length > 0) {
+      const lastFen = records[records.length - 1].fenAfter;
+      // La première partie de la chaîne FEN contient le placement des pièces
+      const boardStr = lastFen.split(' ')[0];
+      (stats as any).queensTraded = !boardStr.includes('q') && !boardStr.includes('Q');
+
+      // Perfect Domination : l'évaluation n'a jamais basculé en faveur de l'adversaire (avec une marge de 50cp)
+      let whiteAlwaysAdvantage = true;
+      let blackAlwaysAdvantage = true;
+      for (const r of records) {
+        if (r.cpAfter < -50) whiteAlwaysAdvantage = false;
+        if (r.cpAfter > 50) blackAlwaysAdvantage = false;
+      }
+      (stats as any).perfectDomination = {
+        white: whiteAlwaysAdvantage && wCount > 10, // Nécessite une partie d'au moins 10 coups
+        black: blackAlwaysAdvantage && bCount > 10
+      };
+    }
+
     return stats;
   }
 }
