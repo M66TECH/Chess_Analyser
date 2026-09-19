@@ -30,13 +30,28 @@ export class OpeningExplorer {
           const url = `/api/explorer?fen=${encodeURIComponent(fen)}&moves=5`;
           const response = await fetch(url, { signal });
           
-          if (!response.ok) {
-            if (response.status === 429) {
-              console.warn('Lichess Explorer Rate Limited (429)');
+if (!response.ok) {
+              if (response.status === 429) {
+                console.warn('Lichess Explorer Rate Limited (429) – retrying in 1s');
+                setTimeout(() => {
+                  fetch(url, { signal }).then(async r => {
+                    if (r.ok) {
+                      const data: OpeningData = await r.json();
+                      this.cache.set(fen, data);
+                      resolve(data);
+                    } else {
+                      resolve(null);
+                    }
+                  }).catch(err => {
+                    if (err instanceof Error && err.name !== 'AbortError') console.error('Lichess Explorer retry error:', err);
+                    resolve(null);
+                  });
+                }, 1000);
+                return;
+              }
+              resolve(null);
+              return;
             }
-            resolve(null);
-            return;
-          }
 
           const data: OpeningData = await response.json();
           this.cache.set(fen, data);

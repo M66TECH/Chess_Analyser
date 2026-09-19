@@ -89,8 +89,8 @@ Une leçon pratique très courte.`;
       side_to_move_before: record.color,
       side_to_move_after: isWhite ? 'black' : 'white',
       // POV Blanc : positif = avantage Blancs
-      evaluation_before: record.cpBefore !== undefined ? (record.cpBefore / 100).toFixed(2) : null,
-      evaluation_after: record.cpAfter !== undefined ? (record.cpAfter / 100).toFixed(2) : null,
+      evaluation_before: record.cpBefore !== undefined ? ((record.color === 'black' ? -record.cpBefore : record.cpBefore) / 100).toFixed(2) : null,
+      evaluation_after: record.cpAfter !== undefined ? ((record.color === 'black' ? -record.cpAfter : record.cpAfter) / 100).toFixed(2) : null,
       player_loss_cp: playerLossCp,
       move_classification: record.classification,
       best_move: {
