@@ -52,7 +52,7 @@ function getLegalDests(fen: string): Map<Key, Key[]> {
 export const ChessBoard: React.FC<ChessBoardProps> = ({
   fen,
   onMove,
-  orientation = 'white',
+  orientation,
   lastMove,
   shapes = [],
 }) => {
@@ -67,6 +67,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   }, [fen]);
 
   const turn: Color = fen.split(' ')[1] === 'w' ? 'white' : 'black';
+  const effectiveOrientation: "white" | "black" = orientation ?? turn;
   const lastMoveKeys: Key[] | undefined = lastMove
     ? [lastMove[0] as Key, lastMove[1] as Key]
     : undefined;
@@ -83,7 +84,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         height="100%"
         fen={fen}
         onMove={onMove}
-        orientation={orientation}
+        orientation={effectiveOrientation}
         turnColor={turn}
         movable={{
           free: false,
