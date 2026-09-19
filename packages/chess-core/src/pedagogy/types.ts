@@ -23,6 +23,8 @@ export interface MoveAnalysis {
   winProbAfter: number;
   accuracy: number;
   classification: MoveClassification;
+  awareness?: boolean;
+  luck?: boolean;
   opening?: string;
   moveNumber: number;
   color: 'white' | 'black';

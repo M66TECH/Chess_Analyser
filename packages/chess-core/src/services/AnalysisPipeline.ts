@@ -129,6 +129,26 @@ export class AnalysisPipeline {
     // 3. Classification
     const { classification, accuracy } = MoveClassifier.classify(winDrop, isBestMove);
 
+    // Awareness & Luck
+    let awareness: boolean | undefined = undefined;
+    const prevRecord = this.moveRecords.length > 0 ? this.moveRecords[this.moveRecords.length - 1] : null;
+    
+    if (prevRecord) {
+      // Si l'adversaire a fait une erreur au coup précédent
+      const prevWasMistake = prevRecord.classification === 'mistake' || prevRecord.classification === 'blunder';
+      if (prevWasMistake) {
+        const weMistake = classification === 'mistake' || classification === 'blunder';
+        awareness = !weMistake;
+      }
+      
+      // Si on a fait une erreur au coup précédent, le coup actuel de l'adversaire détermine notre chance
+      const weMistakePrev = prevRecord.classification === 'mistake' || prevRecord.classification === 'blunder';
+      if (weMistakePrev) {
+        const opponentMistake = classification === 'mistake' || classification === 'blunder';
+        prevRecord.luck = opponentMistake;
+      }
+    }
+
     const analysis: MoveRecord = {
       fenBefore,
       fenAfter,
@@ -142,6 +162,7 @@ export class AnalysisPipeline {
       winProbAfter: EvalNormalizer.cpToWinningChances(normCpAfter),
       accuracy,
       classification,
+      awareness,
       moveNumber,
       color,
       san,
