@@ -34,26 +34,20 @@ export class AccuracyScore {
     let wCpSum = 0, bCpSum = 0;
     let wCount = 0, bCount = 0;
 
+    // Lichess plafonne les valeurs à +/- 1000 centipions pour le calcul de l'ACPL
+    const clampCp = (cp: number) => Math.max(-1000, Math.min(1000, cp));
+
     for (const r of records) {
       if (r.color === 'white') {
         wAccSum += r.accuracy;
-        wCpSum += Math.max(0, r.cpBefore - r.cpAfter);
+        wCpSum += Math.max(0, clampCp(r.cpBefore) - clampCp(r.cpAfter));
         wCount++;
         if (r.classification === 'blunder') stats.blunders.white++;
         if (r.classification === 'mistake') stats.mistakes.white++;
         if (r.classification === 'inaccuracy') stats.inaccuracies.white++;
       } else {
         bAccSum += r.accuracy;
-        // black cp is inverted in normalize (it's always white's POV), but wait!
-        // `cpBefore` and `cpAfter` in MoveRecord are already normalized to White's POV!
-        // If Black plays, they want the evaluation to go DOWN (more negative).
-        // So Black centipawn loss is: (cpAfter - cpBefore) if we use White's POV.
-        // Actually, centipawn loss is always positive. 
-        // Lichess standard ACPL caps the loss at 1000 or similar. Let's just use absolute loss.
-        // Wait, if it's White's POV, Black playing a good move makes CP go from +100 to -100.
-        // If Black plays a bad move, CP goes from -100 to +100. 
-        // So Black loss is: cpAfter - cpBefore.
-        bCpSum += Math.max(0, r.cpAfter - r.cpBefore);
+        bCpSum += Math.max(0, clampCp(r.cpAfter) - clampCp(r.cpBefore));
         bCount++;
         if (r.classification === 'blunder') stats.blunders.black++;
         if (r.classification === 'mistake') stats.mistakes.black++;
