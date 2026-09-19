@@ -107,10 +107,10 @@ function getSEE(
   // LVA
   attackers.sort((a, b) => values[a.piece.role] - values[b.piece.role]);
   
-  let bestChoiceBalance = 0;
+  let bestChoiceBalance = Number.NEGATIVE_INFINITY;
   let firstAttacker: Square | undefined = undefined;
   
-  for (const attacker of attackers.slice(0, 2)) {
+  for (const attacker of attackers) {
     const simulationBoard = cb.clone();
     simulationBoard.take(attacker.square);
     const opponentRecaptureBalance = getSEE(
@@ -127,6 +127,7 @@ function getSEE(
       firstAttacker = attacker.square;
     }
   }
+  if (bestChoiceBalance === Number.NEGATIVE_INFINITY) bestChoiceBalance = 0;
   const result = { balance: bestChoiceBalance, firstAttacker };
   lookupTable.set(key, result);
   return result;

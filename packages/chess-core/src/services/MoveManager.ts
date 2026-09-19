@@ -53,7 +53,7 @@ export class MoveManager {
 
   public getCurrentMoveNumber(): number {
     const path = this.getCurrentPath();
-    return Math.floor(path.length / 2) + 1;
+    return Math.ceil(path.length / 2);
   }
 
   private getCurrentPath(): MoveNode[] {
