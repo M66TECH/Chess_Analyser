@@ -2,41 +2,174 @@ import { GameEventBus } from '../events/GameEventBus';
 import { MoveManager } from '../services/MoveManager';
 import { EngineManager } from '../engine/EngineManager';
 import { AnalysisPipeline } from '../services/AnalysisPipeline';
-import { HistoryManager } from '../services/HistoryManager';
+import { PgnParser } from '../parser/PgnParser';
+import { MoveNode } from '../pedagogy/types';
 
 export class GameManager {
   public eventBus: GameEventBus;
   public moveManager: MoveManager;
   public engineManager: EngineManager;
-  public historyManager: HistoryManager;
   public pipeline: AnalysisPipeline;
+
+  private activeNodeId: string | null = null;
+  private isNavigating: boolean = false;
 
   constructor() {
     this.eventBus = new GameEventBus();
     this.moveManager = new MoveManager();
     this.engineManager = new EngineManager(this.eventBus);
-    this.historyManager = new HistoryManager();
-    
-    this.pipeline = new AnalysisPipeline(
-      this.eventBus,
-      this.moveManager,
-      this.engineManager
-    );
-
-    // Initialize Engine
-    this.engineManager.init();
-
-    // Track history automatically
-    this.eventBus.on('PositionChanged', ({ fen }) => {
-      this.historyManager.addPosition(fen);
-    });
+    this.pipeline = new AnalysisPipeline(this.eventBus, this.moveManager, this.engineManager);
   }
 
   public init() {
+    this.engineManager.init();
     this.pipeline.initialize();
   }
 
-  public playMove(uci: string) {
-    this.eventBus.emit('MovePlayed', { fen: this.moveManager.getFen(), move: uci });
+  public playMove(uci: string): { success: boolean; nodeId?: string } {
+    this.isNavigating = false;
+    const fenBefore = this.moveManager.getFen();
+    const result = this.moveManager.playMove(uci);
+    if (result.success && result.nodeId) {
+      this.activeNodeId = result.nodeId;
+      this.eventBus.emit('MovePlayed', { 
+        fenBefore, 
+        fenAfter: this.moveManager.getFen(), 
+        move: uci, 
+        nodeId: result.nodeId 
+      });
+      return { success: true, nodeId: result.nodeId };
+    }
+    return { success: false };
+  }
+
+  public navigateToNode(nodeId: string | null) {
+    if (this.moveManager.goToNode(nodeId)) {
+      this.activeNodeId = nodeId;
+      this.isNavigating = true;
+      const fen = this.moveManager.getFen();
+      // On passe nodeId au lieu de moveIndex
+      this.eventBus.emit('NavigateTo', { fen, nodeId });
+      this.eventBus.emit('PositionChanged', { fen });
+      this.engineManager.analyze(fen, 14);
+    }
+  }
+
+  public navigateFirst() {
+    this.navigateToNode(null);
+  }
+
+  public navigateLast() {
+    // Va à la fin de la ligne courante en partant de la racine, sinon on ne
+    // parcourt que les enfants du nœud courant et on s'arrête immédiatement.
+    const tree = this.moveManager.getTree();
+    const roots = Array.from(tree.nodes.values()).filter(n => n.parentId === null);
+    let current = roots.length > 0 ? roots[0].id : null;
+
+    while (current) {
+      const node = tree.nodes.get(current);
+      if (node && node.childrenIds.length > 0) {
+        current = node.childrenIds[0]; // always pick first child (mainline)
+      } else {
+        break;
+      }
+    }
+    if (current) this.navigateToNode(current);
+  }
+
+  public navigatePrev() {
+    if (!this.activeNodeId) return;
+    const tree = this.moveManager.getTree();
+    const node = tree.nodes.get(this.activeNodeId);
+    if (node) {
+      this.navigateToNode(node.parentId);
+    }
+  }
+
+  public navigateNext() {
+    const tree = this.moveManager.getTree();
+    if (!this.activeNodeId) {
+      // From root, go to first move
+      const roots = Array.from(tree.nodes.values()).filter(n => n.parentId === null);
+      if (roots.length > 0) this.navigateToNode(roots[0].id);
+      return;
+    }
+    
+    const node = tree.nodes.get(this.activeNodeId);
+    if (node && node.childrenIds.length > 0) {
+      this.navigateToNode(node.childrenIds[0]);
+    }
+  }
+
+  public flipBoard() {
+    // Will be handled at UI level
+  }
+
+  public getMoveRecords() {
+    return this.pipeline.getMoveRecords();
+  }
+
+  public getTree() {
+    return this.moveManager.getTree();
+  }
+
+  public getActiveNodeId() {
+    return this.activeNodeId;
+  }
+
+  public resetGame() {
+    this.pipeline.reset();
+    this.moveManager.reset();
+    this.engineManager.reinit();
+    this.activeNodeId = null;
+    this.isNavigating = false;
+
+    // Réinitialiser la position de départ
+    const startFen = this.moveManager.getFen();
+    this.eventBus.emit('PositionChanged', { fen: startFen });
+    this.engineManager.analyze(startFen, 14);
+  }
+
+  public async loadPgn(pgnText: string): Promise<{ success: boolean; error?: string; moveCount?: number }> {
+    const result = PgnParser.parse(pgnText);
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+
+    // Reset silencieux sans analyse intermédiaire
+    this.pipeline.reset();
+    this.moveManager.reset();
+    this.engineManager.reinit();
+    this.activeNodeId = null;
+    this.isNavigating = false;
+
+    // Rejouer tous les coups silencieusement. Le FEN de départ du PGN n'est pas
+    // transmis par PgnParser : on repart de la position standard.
+    const nodes: MoveNode[] = [];
+    for (const uci of result.moves) {
+      const playResult = this.moveManager.playMove(uci);
+      if (!playResult.success) {
+        console.warn(`[GameManager.loadPgn] Coup illégal à l'index ${nodes.length}: ${uci}`);
+        break;
+      }
+      const node = playResult.nodeId ? this.moveManager.getTree().nodes.get(playResult.nodeId) : null;
+      if (node) nodes.push(node);
+      this.activeNodeId = playResult.nodeId ?? this.activeNodeId;
+    }
+
+    // Émettre l'événement de position finale
+    const finalFen = this.moveManager.getFen();
+    this.eventBus.emit('PositionChanged', { fen: finalFen });
+    this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.moveManager.getTree().currentNodeId });
+
+    // Analyser chaque position séquentiellement (records/coach/graphe)
+    await this.pipeline.analyzeGame(nodes);
+
+    return { success: true, moveCount: nodes.length };
+  }
+
+  public terminate() {
+    this.engineManager.terminate();
   }
 }
+

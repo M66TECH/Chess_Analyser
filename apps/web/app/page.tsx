@@ -1,186 +1,662 @@
-"use client";
-import React, { useEffect, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { GameManager, HeatmapData, EngineEvaluation } from '@chess-analyzer/chess-core';
-import { EvalBar, BoardOverlay, HeatmapLayer } from '@chess-analyzer/ui';
+'use client';
 
-const ChessBoard = dynamic(
-  () => import('@chess-analyzer/ui').then((mod) => mod.ChessBoard),
-  { ssr: false, loading: () => <div className="h-full w-full min-h-[500px] flex items-center justify-center bg-slate-900/50 rounded-xl border border-slate-700/50 text-slate-400 animate-pulse">Chargement...</div> }
-);
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble, PgnImportModal, PromotionDialog } from '@chess-analyzer/ui';
+import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape } from '@chess-analyzer/chess-core';
+import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
+import { parseFen } from 'chessops/fen';
+import { Chess } from 'chessops/chess';
+
+const STORAGE_KEY = 'chess-analyzer:game';
+
+type PromotionCallback = (piece: 'q' | 'r' | 'b' | 'n') => void;
 
 export default function Home() {
-  const gameManagerRef = useRef<GameManager | null>(null);
-  
-  const [fen, setFen] = useState('start');
-  const [heatmap, setHeatmap] = useState<HeatmapData>({});
-  const [evaluation, setEvaluation] = useState<EngineEvaluation | null>(null);
-  const [showHeatmap, setShowHeatmap] = useState(true);
-  const [isEngineReady, setIsEngineReady] = useState(false);
+  const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  const [records, setRecords] = useState<MoveRecord[]>([]);
+  const [currentWinProb, setCurrentWinProb] = useState<number>(0);
+  const [currentCp, setCurrentCp] = useState<number | undefined>(0);
+  const [currentMate, setCurrentMate] = useState<number | undefined>(undefined);
+  const [currentDepth, setCurrentDepth] = useState<number>(0);
+  const [engineStatus, setEngineStatus] = useState<'idle' | 'analyzing' | 'ready' | 'error'>('idle');
+  const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
+  const [showReport, setShowReport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [threatMode, setThreatMode] = useState(false);
+  const [explorerData, setExplorerData] = useState<ExplorerResult>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [lastMove, setLastMove] = useState<[string, string] | undefined>(undefined);
+  const [orientation, setOrientation] = useState<'white' | 'black'>('white');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [promotion, setPromotion] = useState<{ from: string; to: string; callback: PromotionCallback } | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<'moves' | 'coach' | 'explorer'>('coach');
+  const multiPvs = useRef<Map<number, EngineEvaluation>>(new Map());
+  const threatPvs = useRef<Map<number, EngineEvaluation>>(new Map());
+  const gmRef = useRef<GameManager | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Debounce des appels à la base Lichess (évite les rafales à la restauration). */
+  const explorerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!gameManagerRef.current) {
-      const gm = new GameManager();
-      gameManagerRef.current = gm;
-      
-      gm.eventBus.on('PositionChanged', (data) => setFen(data.fen));
-      gm.eventBus.on('HeatmapUpdated', (data) => setHeatmap(data));
-      gm.eventBus.on('EngineEvaluationUpdated', (data) => {
-        setEvaluation(data);
-        setIsEngineReady(true);
-      });
-
-      gm.init();
-    }
-
-    return () => {
-      if (gameManagerRef.current) {
-        gameManagerRef.current.engineManager.terminate();
-      }
-    };
+  /** Requête la base d'ouvertures au plus toutes les 300 ms (la dernière gagne). */
+  const fetchExplorerDebounced = useCallback((fen: string) => {
+    if (explorerTimer.current) clearTimeout(explorerTimer.current);
+    explorerTimer.current = setTimeout(() => {
+      ExplorerService.fetch(fen).then(setExplorerData);
+    }, 300);
   }, []);
 
-  const handleMove = (from: string, to: string) => {
-    if (gameManagerRef.current) {
-      const uci = `${from}${to}`;
-      gameManagerRef.current.playMove(uci);
+  // --- Toast with auto-dismiss ---
+  const showNotice = useCallback((msg: string, durationMs = 6000) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), durationMs);
+  }, []);
+
+  // --- Persistence: save/restore game to localStorage ---
+  const saveGame = useCallback(() => {
+    const gm = gmRef.current;
+    if (!gm) return;
+    const uciMoves = gm.moveManager.getUciMoves();
+    if (uciMoves.length === 0) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      return;
     }
-  };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ moves: uciMoves, ts: Date.now() }));
+    } catch {}
+  }, []);
+
+  const restoreGame = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const { moves } = JSON.parse(raw) as { moves: string[]; ts: number };
+      if (!Array.isArray(moves) || moves.length === 0) return false;
+      const gm = gmRef.current;
+      if (!gm) return false;
+      for (const uci of moves) {
+        gm.playMove(uci);
+      }
+      setActiveNodeId(gm.getActiveNodeId());
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /** Surligne le dernier coup joué une fois la situation reconstruite. */
+  const syncLastMoveFromBoard = useCallback(() => {
+    const moves = gmRef.current?.moveManager.getUciMoves() ?? [];
+    const last = moves.at(-1);
+    setLastMove(last ? [last.slice(0, 2), last.slice(2, 4)] : undefined);
+  }, []);
+
+  useEffect(() => {
+    const gm = new GameManager();
+    const eventBus = gm.eventBus;
+    gmRef.current = gm;
+
+    eventBus.on('PedagogyUpdated', () => {
+      setRecords(gm.getMoveRecords());
+      saveGame();
+    });
+
+    eventBus.on('MovePlayed', ({ nodeId }) => setActiveNodeId(nodeId));
+    eventBus.on('NavigateTo', ({ nodeId }) => setActiveNodeId(nodeId));
+
+    eventBus.on('EngineEvaluationUpdated', (evaluation) => {
+      multiPvs.current.set(evaluation.multiPv || 1, evaluation);
+
+      if (!evaluation.multiPv || evaluation.multiPv === 1) {
+        const currentFen = gmRef.current?.moveManager.getFen() ?? fen;
+        if (evaluation.fen && evaluation.fen !== currentFen) return;
+        const turn = currentFen.split(' ')[1] === 'w' ? 'white' : 'black';
+        // `normalize` rend désormais le cp POV Blanc (signe inversé pour les
+        // Noirs), cohérent avec `winProb` : plus besoin de signe manuel ici.
+        const normCp = EvalNormalizer.normalize(evaluation.cp, evaluation.mate, turn);
+        setCurrentWinProb(EvalNormalizer.cpToWinningChances(normCp));
+        // Le mate affiché (`M3`) garde sa valeur UCI brute signée manuellement :
+        // `normalize` l'aurait replié à ±1000 (format +10.0 au lieu de M3).
+        const sign = turn === 'white' ? 1 : -1;
+        setCurrentCp(typeof evaluation.cp === 'number' ? normCp : undefined);
+        setCurrentMate(typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined);
+        setCurrentDepth(evaluation.depth);
+        setEngineStatus(evaluation.depth >= 14 ? 'ready' : 'analyzing');
+      }
+
+      const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
+
+      // Flèches MultiPV : la meilleure ligne en vert, les alternatives en bleu.
+      // `pvToShape` gère les promotions (`e7e8q`), là où une découpe par index
+      // restait fragile.
+      const pv3 = multiPvs.current.get(3);
+      const pv2 = multiPvs.current.get(2);
+      const pv1 = multiPvs.current.get(1);
+
+      for (const [pv, brush] of [
+        [pv3, 'paleBlue'],
+        [pv2, 'paleBlue'],
+        [pv1, 'paleGreen'],
+      ] as const) {
+        const shape = pvToShape(pv?.pv, brush);
+        if (shape) newShapes.push(shape);
+      }
+
+      try {
+        const fenStr = gmRef.current?.moveManager.getFen() ?? fen;
+        const parsed = parseFen(fenStr).unwrap();
+        const pos = Chess.fromSetup(parsed).unwrap();
+        const board = pos.board;
+        const epSquare = pos.epSquare;
+
+        const undefended = MotifEngine.detectUndefended(board, epSquare);
+        undefended.forEach(u => {
+          const file = String.fromCharCode(97 + (u.square % 8));
+          const rank = Math.floor(u.square / 8) + 1;
+          newShapes.push({ orig: `${file}${rank}`, brush: 'red' });
+        });
+
+        const pins = MotifEngine.detectPins(board);
+        pins.forEach(p => {
+          const file = String.fromCharCode(97 + (p.pinned % 8));
+          const rank = Math.floor(p.pinned / 8) + 1;
+          newShapes.push({ orig: `${file}${rank}`, brush: 'blue' });
+        });
+      } catch {
+      }
+
+      setShapes(newShapes);
+    });
+
+    eventBus.on('ThreatEvaluationUpdated', (evaluation) => {
+      threatPvs.current.set(evaluation.multiPv || 1, evaluation);
+
+      const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
+      const pv3 = threatPvs.current.get(3);
+      const pv2 = threatPvs.current.get(2);
+      const pv1 = threatPvs.current.get(1);
+
+      for (const [pv, brush] of [
+        [pv3, 'paleRed'],
+        [pv2, 'paleRed'],
+        [pv1, 'red'],
+      ] as const) {
+        const shape = pvToShape(pv?.pv, brush);
+        if (shape) newShapes.push(shape);
+      }
+
+      setShapes(newShapes);
+    });
+
+    eventBus.on('AnalysisStarted', () => {
+      setEngineStatus('analyzing');
+      setCurrentDepth(0);
+    });
+
+    eventBus.on('EngineError', (message) => {
+      setEngineStatus('error');
+      showNotice(`Moteur Stockfish : ${message}`, 10000);
+    });
+
+    eventBus.on('PositionChanged', ({ fen }) => {
+      multiPvs.current.clear();
+      threatPvs.current.clear();
+      setFen(fen);
+      fetchExplorerDebounced(fen);
+    });
+
+    gm.init();
+
+    // Restore previous session from localStorage. Différé d'un tick : la
+    // restauration relit un système externe (localStorage + moteur) et ne doit
+    // pas déclencher de rendu en cascade pendant le montage.
+    const restoreTimer = setTimeout(() => {
+      if (restoreGame()) {
+        syncLastMoveFromBoard();
+        showNotice('Partie précédente restaurée.', 3000);
+      }
+    }, 0);
+
+    return () => {
+      clearTimeout(restoreTimer);
+      gm.terminate();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Précision et ACPL calculés avec les formules exactes de Lichess
+  // (`AccuracyPercent.gameAccuracy`, `AccuracyCP.mean`) : le rapport affiche
+  // ainsi les mêmes chiffres que lichess.org pour la même partie.
+  const stats = useMemo(() => {
+    const base = AccuracyScore.computeGameStats(records);
+    const lichess = AccuracyScore.computeLichessAccuracy(records, 'white');
+    return {
+      ...base,
+      accuracy: {
+        white: Math.round(lichess.white * 10) / 10,
+        black: Math.round(lichess.black * 10) / 10,
+      },
+    };
+  }, [records]);
+  const activeRecord = useMemo(() => records.find(r => r.nodeId === activeNodeId), [records, activeNodeId]);
+  const activeIndex = useMemo(() => (activeRecord ? records.indexOf(activeRecord) : undefined), [records, activeRecord]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      const gm = gmRef.current;
+      switch (event.key) {
+        case 'ArrowLeft':
+          event.preventDefault();
+          gm?.navigatePrev();
+          break;
+        case 'ArrowRight':
+          event.preventDefault();
+          gm?.navigateNext();
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          gm?.navigateFirst();
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          gm?.navigateLast();
+          break;
+        case 'f':
+        case 'F':
+          setOrientation(prev => (prev === 'white' ? 'black' : 'white'));
+          break;
+        case 'Escape':
+          setShowReport(false);
+          setShowImport(false);
+          setShowHelp(false);
+          break;
+        case '?':
+          setShowHelp(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    gmRef.current?.navigateToNode(nodeId);
+  }, []);
+
+  // --- Promotion handling ---
+  const handleMove = useCallback((from: string, to: string) => {
+    const gm = gmRef.current;
+    if (!gm) return;
+    gm.pipeline.resetPending();
+
+    // La logique de promotion vit dans MoveManager : elle se base sur les
+    // coups réellement légaux, pas sur la rangée d'arrivée.
+    if (gm.moveManager.isPromotion(from, to)) {
+      setPromotion({
+        from,
+        to,
+        callback: (piece: 'q' | 'r' | 'b' | 'n') => {
+          if (gm.playMove(`${from}${to}${piece}`).success) {
+            setLastMove([from, to]);
+          }
+          setPromotion(null);
+        },
+      });
+      return;
+    }
+
+    if (gm.playMove(`${from}${to}`).success) {
+      setLastMove([from, to]);
+    }
+  }, []);
+
+  const handleExplorerMove = useCallback((move: { san: string; uci: string }) => {
+    if (!move.uci) return;
+    setLastMove([move.uci.slice(0, 2), move.uci.slice(2, 4)]);
+    gmRef.current?.playMove(move.uci);
+  }, []);
+
+  const toggleThreatMode = useCallback(() => {
+    setThreatMode(prev => {
+      const next = !prev;
+      if (next) {
+        setShapes([]);
+        gmRef.current?.engineManager.analyzeThreat(fen);
+      } else {
+        gmRef.current?.engineManager.analyze(fen);
+      }
+      return next;
+    });
+  }, [fen]);
+
+  const handleExportPgn = useCallback(() => {
+    if (records.length === 0) {
+      showNotice('Aucun coup à exporter : jouez ou importez une partie.');
+      return;
+    }
+    const pgnStr = PgnParser.exportAnnotatedPgn(records);
+    const blob = new Blob([pgnStr], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'chess_analysis.pgn';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showNotice('PGN exporté.');
+  }, [records, showNotice]);
+
+  const handleImportPgn = useCallback((pgnText: string) => {
+    if (!pgnText || !gmRef.current) return;
+    setShowImport(false);
+    showNotice('Analyse de la partie en cours…', 15000);
+    gmRef.current.loadPgn(pgnText).then(result => {
+      if (result.success) {
+        setActiveNodeId(gmRef.current?.getActiveNodeId() ?? null);
+        syncLastMoveFromBoard();
+        setThreatMode(false);
+        showNotice(`Partie chargée : ${result.moveCount ?? 0} coups analysés.`);
+      } else {
+        showNotice(`Import PGN impossible : ${result.error ?? 'format non reconnu'}`, 8000);
+      }
+    });
+  }, [showNotice, syncLastMoveFromBoard]);
+
+  const handleReset = useCallback(() => {
+    const gm = gmRef.current;
+    if (!gm) return;
+    gm.resetGame();
+    setActiveNodeId(null);
+    setLastMove(undefined);
+    setRecords([]);
+    setThreatMode(false);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    showNotice('Nouvelle partie.', 3000);
+  }, [showNotice]);
+
+  const depthLabel = useMemo(() => {
+    if (engineStatus === 'error') return 'Erreur';
+    if (engineStatus === 'idle' || currentDepth === 0) return 'Initialisation…';
+    if (currentDepth >= 14) return `Profondeur ${currentDepth}`;
+    return `Profondeur ${currentDepth}/${14}`;
+  }, [engineStatus, currentDepth]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-sky-500/30 overflow-hidden flex flex-col font-sans">
-      
-      {/* Navbar */}
-      <header className="glass-panel border-b border-t-0 border-l-0 border-r-0 border-slate-700/50 px-6 py-4 flex items-center justify-between z-20">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+    <div className="min-h-screen w-full flex flex-col">
+      {/* === Top Navigation Bar === */}
+      <nav className="sticky top-0 z-50 glass-panel border-b border-slate-700/50 px-4 py-2.5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center ring-1 ring-indigo-500/30">
+            <span className="text-lg">&#9822;</span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight">Chess<span className="text-gradient">Analyzer</span></h1>
+          <div className="hidden sm:block">
+            <h1 className="text-sm font-bold text-slate-100 leading-tight">Chess Analyzer</h1>
+            <p className="text-[10px] text-indigo-400/70 leading-tight">Coach IA d&apos;échecs</p>
+          </div>
         </div>
-        <div className="flex items-center gap-4 text-sm font-medium">
-          <button className="text-slate-400 hover:text-white transition-colors">Documentation</button>
-          <button className="text-slate-400 hover:text-white transition-colors">Paramètres</button>
-        </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        
-        {/* Left Sidebar (Settings & Tools) */}
-        <aside className="w-full lg:w-72 glass-panel border-r border-t-0 border-b-0 border-l-0 border-slate-700/50 p-6 flex flex-col gap-8 z-10 hidden lg:flex">
-          <div>
-            <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-4">Affichage</h3>
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <div className="relative">
-                <input 
-                  type="checkbox" 
-                  className="sr-only" 
-                  checked={showHeatmap} 
-                  onChange={(e) => setShowHeatmap(e.target.checked)} 
+        {/* Engine status indicator */}
+        <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 glass-panel-light rounded-lg px-3 py-1.5">
+          <span className={`w-2 h-2 rounded-full ${engineStatus === 'ready' ? 'bg-green-400' : engineStatus === 'analyzing' ? 'bg-amber-400 animate-pulse' : engineStatus === 'error' ? 'bg-red-400' : 'bg-slate-500'}`} />
+          <span className="font-mono">{depthLabel}</span>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setShowImport(true)}
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
+            title="Importer une partie PGN"
+            aria-label="Importer PGN"
+          >
+            <span>&#128194;</span>
+            <span className="hidden sm:inline">Importer</span>
+          </button>
+          <button
+            onClick={handleExportPgn}
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
+            title="Exporter en PGN"
+            aria-label="Exporter PGN"
+          >
+            <span>&#128190;</span>
+            <span className="hidden sm:inline">Exporter</span>
+          </button>
+          <button
+            onClick={handleReset}
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-red-900/40 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-red-300"
+            title="Nouvelle partie"
+            aria-label="Nouvelle partie"
+          >
+            <span>&#8635;</span>
+            <span className="hidden sm:inline">Recommencer</span>
+          </button>
+          <button
+            onClick={() => setShowHelp(true)}
+            className="px-2.5 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-sm font-bold transition-all border border-slate-700/50 text-slate-400 hover:text-white"
+            title="Aide & raccourcis (touche ?)"
+            aria-label="Aide"
+          >
+            ?
+          </button>
+        </div>
+      </nav>
+
+      {/* === Toast === */}
+      {notice && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-[90%] glass-panel rounded-lg px-4 py-2.5 text-sm text-slate-200 flex items-center gap-3 shadow-2xl">
+          <span className="flex-1">{notice}</span>
+          <button
+            onClick={() => setNotice(null)}
+            className="text-slate-400 hover:text-white transition-colors shrink-0"
+            aria-label="Fermer la notification"
+          >
+            &#10005;
+          </button>
+        </div>
+      )}
+
+      {/* === Main Content === */}
+      <main className="flex-1 w-full max-w-[1450px] mx-auto p-3 sm:p-4 xl:p-6">
+        <div className="flex flex-col xl:flex-row gap-4 xl:gap-6 items-start justify-center">
+
+          {/* --- Left Col: Board + EvalBar + Graph --- */}
+          <div className="flex flex-col gap-3 sm:gap-4 w-full xl:w-auto xl:shrink-0">            {/* Board area */}
+            <div className="flex gap-2 sm:gap-3">
+              <EvalBar winProb={currentWinProb} cp={currentCp} mate={currentMate} orientation={orientation} />
+              <div className="relative flex-1 aspect-square max-w-[600px] shadow-2xl rounded-xl overflow-hidden border border-slate-800 ring-1 ring-white/10">
+                <ChessBoard
+                  fen={fen}
+                  onMove={handleMove}
+                  shapes={shapes}
+                  lastMove={lastMove}
+                  orientation={orientation}
                 />
-                <div className={`block w-10 h-6 rounded-full transition-colors ${showHeatmap ? 'bg-sky-500' : 'bg-slate-700'}`}></div>
-                <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${showHeatmap ? 'transform translate-x-4' : ''}`}></div>
-              </div>
-              <span className="text-sm text-slate-300 group-hover:text-white transition-colors">Heatmap de Pression</span>
-            </label>
-          </div>
-          
-          <div>
-            <h3 className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-4">Statut Moteur</h3>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isEngineReady ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)] animate-pulse' : 'bg-yellow-500'}`}></div>
-              <span className="text-sm text-slate-300">
-                {isEngineReady ? 'Stockfish 16.1 prêt' : 'Démarrage...'}
-              </span>
-            </div>
-          </div>
-        </aside>
-
-        {/* Center (Board) */}
-        <section className="flex-1 p-6 lg:p-10 flex items-center justify-center relative overflow-y-auto lg:overflow-hidden">
-          {/* Subtle background glow */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-sky-500/10 rounded-full blur-[100px] pointer-events-none"></div>
-          
-          <div className="flex flex-row gap-4 h-full max-h-[750px] w-full max-w-[850px] relative z-10">
-            {/* Eval Bar */}
-            <div className="h-full flex-shrink-0 w-8 lg:w-10 pt-8">
-              <div className="h-[calc(100%-2rem)]">
-                 <EvalBar cp={evaluation?.cp} mate={evaluation?.mate} orientation="white" />
-              </div>
-            </div>
-            
-            {/* Board Container */}
-            <div className="flex-1 flex flex-col justify-center">
-              <div className="glass-panel p-2 rounded-xl border border-slate-700/50 glow-primary shadow-2xl relative w-full aspect-square max-h-full">
-                <ChessBoard fen={fen} onMove={handleMove} orientation="white" />
-                <BoardOverlay>
-                  {showHeatmap && <HeatmapLayer data={heatmap} orientation="white" />}
-                </BoardOverlay>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Right Sidebar (Analysis) */}
-        <aside className="w-full lg:w-96 glass-panel border-l border-t-0 border-b-0 border-r-0 border-slate-700/50 flex flex-col z-10 overflow-hidden">
-          <div className="p-6 border-b border-slate-700/50">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <svg className="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              Analyse Moteur
-            </h2>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-            
-            {/* Score Card */}
-            <div className="bg-slate-900/50 rounded-xl p-6 border border-slate-700/50 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-[40px] group-hover:bg-indigo-500/20 transition-colors"></div>
-              <div className="text-sm text-slate-400 mb-1">Évaluation actuelle</div>
-              <div className="text-4xl font-mono font-bold text-white tracking-tight flex items-baseline gap-2">
-                {evaluation ? (
-                  evaluation.mate !== undefined ? (
-                    <span className="text-sky-400">M{Math.abs(evaluation.mate)}</span>
-                  ) : (
-                    <span className={evaluation.cp && evaluation.cp > 0 ? "text-white" : "text-slate-300"}>
-                      {(evaluation.cp || 0) > 0 ? '+' : ''}{((evaluation.cp || 0) / 100).toFixed(2)}
-                    </span>
-                  )
-                ) : (
-                  <span className="text-slate-600 animate-pulse">0.00</span>
-                )}
-                <span className="text-xs text-slate-500 font-sans tracking-normal font-normal">
-                  Profondeur {evaluation?.depth || 0}
-                </span>
               </div>
             </div>
 
-            {/* PV Lines */}
-            <div>
-              <h3 className="text-sm font-medium text-slate-300 mb-3">Meilleure ligne (PV)</h3>
-              <div className="bg-slate-900/80 rounded-lg p-4 font-mono text-sm leading-relaxed border border-slate-700/30">
-                {evaluation && evaluation.pv.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {evaluation.pv.slice(0, 10).map((move, i) => (
-                      <span key={i} className="px-2 py-1 rounded bg-slate-800 text-sky-300 border border-slate-700/50">
-                        {move}
-                      </span>
-                    ))}
-                    {evaluation.pv.length > 10 && <span className="text-slate-500 px-1 py-1">...</span>}
-                  </div>
-                ) : (
-                  <span className="text-slate-600 italic">En attente de calcul...</span>
-                )}
-              </div>
+            {/* Secondary controls row (also hosts the mobile panel tabs) */}
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={() => setShowReport(true)} className="flex-1 min-w-[100px] px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-all shadow-lg flex items-center gap-2 justify-center text-white border border-indigo-400/30">
+                <span>&#128202;</span> Bilan
+              </button>
+              <button
+                onClick={toggleThreatMode}
+                className={`flex-1 min-w-[100px] px-3 py-2 rounded-lg text-sm font-medium transition-all border flex items-center gap-2 justify-center ${threatMode ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'hover:bg-slate-800/60 text-slate-300 border-slate-700/50'}`}
+              >
+                <span>&#128680;</span> Menaces
+              </button>
+              <button onClick={() => setOrientation(o => o === 'white' ? 'black' : 'white')} className="px-3 py-2 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700/50 text-slate-300 hover:text-white" title="Retourner l'échiquier (F)">
+                <span>&#8634;</span>
+              </button>
             </div>
 
+            {/* Mobile panel tabs: BELOW the board so they never intercept drags
+                on the bottom-center squares (d1/e1/d2/e2). */}
+            <div className="xl:hidden flex gap-1 glass-panel rounded-lg p-1">
+              {(['coach', 'moves', 'explorer'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setMobilePanel(p)}
+                  aria-pressed={mobilePanel === p}
+                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${mobilePanel === p ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {p === 'coach' ? 'Coach' : p === 'moves' ? 'Coups' : 'Base'}
+                </button>
+              ))}
+            </div>
+
+            {/* Graph + Key Moments */}
+            <div className="flex gap-3 w-full h-[120px] sm:h-[150px]">
+              <div className="flex-1 glass-panel rounded-xl overflow-hidden p-2 sm:p-3 relative">
+                <EvalGraph
+                  records={records}
+                  activeIndex={activeIndex}
+                  onNodeClick={(index) => {
+                    const node = records[index];
+                    if (node) handleNodeSelect(node.nodeId);
+                  }}
+                />
+              </div>
+              <div className="w-[160px] sm:w-[200px] shrink-0">
+                <KeyMoments records={records} onNodeSelect={handleNodeSelect} />
+              </div>
+            </div>
           </div>
-        </aside>
+
+          {/* --- Middle Col: MoveList + Explorer.
+              Mobile : l'onglet « Coups » montre la liste, l'onglet « Base »
+              montre l'explorer (avant, il était inaccessible : enfermé dans
+              la colonne « Coups » tout en n'étant visible que sur « Base »).
+              Desktop : les deux, comme avant. --- */}
+          <div
+            className={`${mobilePanel === 'moves' || mobilePanel === 'explorer' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[300px] xl:shrink-0 xl:h-[774px]`}
+          >
+            <div className={`flex-1 min-h-[300px] xl:min-h-[400px] ${mobilePanel === 'moves' ? 'block' : 'hidden'} xl:block`}>
+              <MoveList
+                records={records}
+                activeIndex={activeIndex}
+                onNodeClick={(index) => {
+                  const node = records[index];
+                  if (node) handleNodeSelect(node.nodeId);
+                }}
+              />
+            </div>
+            <div className={`${mobilePanel === 'explorer' ? 'block' : 'hidden'} xl:block h-[280px] xl:h-[260px] glass-panel-light rounded-xl overflow-hidden relative`}>
+              <Explorer data={explorerData} onMoveSelect={handleExplorerMove} />
+            </div>
+          </div>
+
+          {/* --- Right Col: Coach --- */}
+          <div className={`${mobilePanel === 'coach' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[400px] xl:shrink-0 xl:h-[774px]`}>
+            <div className="flex-1 overflow-hidden min-h-[300px] xl:min-h-[400px]">
+              <CoachBubble record={activeRecord} />
+            </div>
+          </div>
+
+        </div>
       </main>
+
+      {/* === Rapport de partie : overlay plein écran, comme les autres modals
+          (il était piégé dans le carré du plateau, écrasé à 600 px) === */}
+      {showReport && (
+        <div className="fixed inset-0 z-[150] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <GameReport stats={stats} onClose={() => setShowReport(false)} />
+        </div>
+      )}
+
+      {/* === Modals === */}
+      {showImport && (
+        <PgnImportModal
+          onImport={handleImportPgn}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+
+      {showHelp && (
+        <HelpModal onClose={() => setShowHelp(false)} />
+      )}
+
+      {promotion && (
+        <PromotionDialog
+          from={promotion.from}
+          to={promotion.to}
+          color={fen.split(' ')[1] === 'w' ? 'white' : 'black'}
+          onSelect={promotion.callback}
+          onCancel={() => setPromotion(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Help Modal ---
+function HelpModal({ onClose }: { onClose: () => void }) {
+  const shortcuts: Array<[string, string]> = [
+    ['←', 'Coup précédent'],
+    ['→', 'Coup suivant'],
+    ['↑', 'Début de la partie'],
+    ['↓', 'Fin de la partie'],
+    ['F', 'Retourner l\'échiquier'],
+    ['?', 'Ouvrir / fermer cette aide'],
+    ['Esc', 'Fermer le dialogue actif'],
+  ];
+  const badges: Array<[string, string, string]> = [
+    ['!!', 'Brillant', 'text-teal-300'],
+    ['!', 'Superbe', 'text-blue-300'],
+    ['★', 'Meilleur coup', 'text-green-400'],
+    ['', 'Bon', 'text-green-300'],
+    ['?!', 'Imprécision', 'text-yellow-300'],
+    ['?', 'Erreur', 'text-orange-400'],
+    ['??', 'Gaffe', 'text-red-400'],
+  ];
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" onClick={onClose}>
+      <div className="glass-panel rounded-2xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto custom-scrollbar" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+            <span>&#128161;</span> Aide & Raccourcis
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl" aria-label="Fermer">&#10005;</button>
+        </div>
+
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">Raccourcis clavier</h3>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {shortcuts.map(([key, action]) => (
+            <div key={key} className="flex items-center gap-2 text-sm">
+              <kbd className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs font-mono text-slate-200 min-w-[28px] text-center">{key}</kbd>
+              <span className="text-slate-400">{action}</span>
+            </div>
+          ))}
+        </div>
+
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">Classification des coups</h3>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {badges.map(([icon, label, color]) => (
+            <div key={label} className="flex items-center gap-2 text-sm">
+              <span className={`font-bold ${color} w-8 text-center`}>{icon}</span>
+              <span className="text-slate-400">{label}</span>
+            </div>
+          ))}
+        </div>
+
+        <h3 className="text-sm font-semibold text-slate-300 mb-2">Conseils</h3>
+        <ul className="text-sm text-slate-400 space-y-1.5 list-disc list-inside">
+          <li>Jouez un coup ou importez un PGN pour lancer l&apos;analyse.</li>
+          <li>Les <span className="text-green-400">flèches vertes</span> indiquent le meilleur coup selon Stockfish.</li>
+          <li>Les <span className="text-red-400">cercles rouges</span> signalent les pièces en prise non défendues.</li>
+          <li>Les <span className="text-blue-400">cercles bleus</span> montrent les pièces clouées.</li>
+          <li>Le coach IA explique chaque coup en langage naturel.</li>
+          <li>Votre partie est sauvegardée automatiquement dans votre navigateur.</li>
+        </ul>
+      </div>
     </div>
   );
 }
