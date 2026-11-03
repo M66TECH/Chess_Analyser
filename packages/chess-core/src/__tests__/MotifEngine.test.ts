@@ -40,5 +40,40 @@ describe('MotifEngine', () => {
       const board = boardFromFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
       expect(MotifEngine.detectUndefended(board, undefined)).toHaveLength(0);
     });
+
+    it('détecte un pion prenable en passant mais protégé directement (conformité boardAnalysis.test.ts)', () => {
+      const parsed = parseFen('6bk/8/8/3pPp2/8/8/6B1/6K1 w - d6 0 1').unwrap();
+      const undefended = MotifEngine.detectUndefended(parsed.board, parsed.epSquare);
+      const squares = undefended.map(u => {
+        const file = String.fromCharCode(97 + (u.square % 8));
+        const rank = Math.floor(u.square / 8) + 1;
+        return `${file}${rank}`;
+      });
+      expect(squares).toEqual(['d6']);
+    });
+
+    it('ne marque pas comme non défendue une pièce dont le défenseur n\'est pas réellement éliminé (Attacker also pins defender)', () => {
+      const parsed = parseFen('6k1/8/8/8/1q6/2B5/1P6/4K3 b - - 0 1').unwrap();
+      const undefended = MotifEngine.detectUndefended(parsed.board, parsed.epSquare);
+      const squares = undefended.map(u => {
+        const file = String.fromCharCode(97 + (u.square % 8));
+        const rank = Math.floor(u.square / 8) + 1;
+        return `${file}${rank}`;
+      });
+      // b4 est en prise (Fou c3), mais b2 ne l'est pas
+      expect(squares).toEqual(['b4']);
+    });
+  });
+
+  describe('detectPositionalFeatures', () => {
+    it('identifie les pions doublés, isolés et passés', () => {
+      // Blancs ont deux pions doublés isolés sur la colonne c (c3, c4) et un pion passé en a5
+      const board = boardFromFen('4k3/8/8/P7/2P5/2P5/8/4K3 w - - 0 1');
+      const pos = MotifEngine.detectPositionalFeatures(board);
+      expect(pos.doubledPawns.white).toEqual(['c3', 'c4']);
+      expect(pos.isolatedPawns.white).toContain('a5');
+      expect(pos.isolatedPawns.white).toContain('c3');
+      expect(pos.passedPawns.white).toContain('a5');
+    });
   });
 });

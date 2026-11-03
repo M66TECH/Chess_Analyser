@@ -19,6 +19,27 @@ export function uciToSan(fen: string, uci: string): string | null {
   }
 }
 
+/**
+ * Convertit une séquence de coups UCI (variante PV) en coups SAN successifs
+ * à partir d'une position FEN initiale. S'arrête au premier coup illégal.
+ */
+export function pvToSan(fen: string, pvUci: string[]): string[] {
+  const sanMoves: string[] = [];
+  try {
+    const setup = parseFen(fen).unwrap();
+    const pos = Chess.fromSetup(setup).unwrap();
+    for (const uci of pvUci) {
+      const move = parseUci(uci);
+      if (!move || !pos.isLegal(move)) break;
+      sanMoves.push(makeSan(pos, move));
+      pos.play(move);
+    }
+  } catch {
+    // Retourne les coups déjà convertis
+  }
+  return sanMoves;
+}
+
 /** Coup UCI valide : 4 caractères, ou 5 avec la pièce de promotion. */
 const UCI_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 

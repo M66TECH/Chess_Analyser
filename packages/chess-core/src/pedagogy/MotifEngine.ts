@@ -11,9 +11,10 @@ import {
 import { Board } from 'chessops/board';
 import { Chess } from 'chessops/chess';
 import { chessgroundDests } from 'chessops/compat';
+import { parseFen } from 'chessops/fen';
 import { SquareSet } from 'chessops/squareSet';
 import { type Role, type Color, type Piece, type NormalMove, COLORS, type Square } from 'chessops/types';
-import { parseSquare, opposite, squareRank, squareFile, squareFromCoords } from 'chessops/util';
+import { parseSquare, makeSquare, opposite, squareRank, squareFile, squareFromCoords } from 'chessops/util';
 
 export interface Pin {
   pinned: Square;
@@ -30,6 +31,21 @@ export interface Undefended {
 export interface Checkable {
   king: Square;
   check: NormalMove;
+}
+
+export interface PositionalFeatures {
+  doubledPawns: { white: string[]; black: string[] };
+  isolatedPawns: { white: string[]; black: string[] };
+  passedPawns: { white: string[]; black: string[] };
+  undevelopedMinors: { white: string[]; black: string[] };
+  openFilesNearKing: { white: string[]; black: string[] };
+}
+
+export interface FullBoardMotifs {
+  pins: Pin[];
+  undefended: Undefended[];
+  checkable: Checkable[];
+  positional: PositionalFeatures;
 }
 
 const values: Record<Role, number> = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 100 };
@@ -103,14 +119,14 @@ function getSEE(
   const key = lookupKey(cb, target);
   if (lookupTable.has(key)) return lookupTable.get(key)!;
   const attackers = getAttackers(square, opposite(target.color), cb, isEpSquare ? 'pawn' : undefined);
-  
+
   // LVA
   attackers.sort((a, b) => values[a.piece.role] - values[b.piece.role]);
-  
-  let bestChoiceBalance = Number.NEGATIVE_INFINITY;
+
+  let bestChoiceBalance = 0;
   let firstAttacker: Square | undefined = undefined;
-  
-  for (const attacker of attackers) {
+
+  for (const attacker of attackers.slice(0, 2)) {
     const simulationBoard = cb.clone();
     simulationBoard.take(attacker.square);
     const opponentRecaptureBalance = getSEE(
@@ -127,7 +143,6 @@ function getSEE(
       firstAttacker = attacker.square;
     }
   }
-  if (bestChoiceBalance === Number.NEGATIVE_INFINITY) bestChoiceBalance = 0;
   const result = { balance: bestChoiceBalance, firstAttacker };
   lookupTable.set(key, result);
   return result;
@@ -186,24 +201,17 @@ export class MotifEngine {
   public static detectUndefended(board: Board, epSquare?: Square): Undefended[] {
     const undefended: Undefended[] = [];
     const cb = board;
-    const seen = new Set<Square>();
-    for (let square = 0; square < 64; square++) {
-      // An en passant capture targets the pawn behind `epSquare`, not `epSquare` itself.
-      const targetSquare = square === epSquare ? epTargetPawnSq(epSquare) : square;
-      if (seen.has(targetSquare)) continue;
-      seen.add(targetSquare);
-
-      const piece = board.get(targetSquare);
-      if (!piece || piece.role === 'king') continue;
-      if (!isSquareAttacked(targetSquare, opposite(piece.color), cb)) continue;
-
-      const { balance, firstAttacker } = getSEE(targetSquare, false, piece, cb, new Map(), false);
-      if (balance > 0 && firstAttacker !== undefined) {
-        undefended.push({
-          square: targetSquare,
-          materialLoss: balance,
-          principalAttacker: firstAttacker,
-        });
+    for (let i = 0; i < 64; i++) {
+      const p = board.get(i === epSquare ? epTargetPawnSq(epSquare) : i);
+      if (p && p.role !== 'king' && isSquareAttacked(i, opposite(p.color), cb)) {
+        const { balance, firstAttacker } = getSEE(i, i === epSquare, p, cb, new Map(), false);
+        if (balance > 0 && firstAttacker !== undefined) {
+          undefended.push({
+            square: i,
+            materialLoss: balance,
+            principalAttacker: firstAttacker,
+          });
+        }
       }
     }
     return undefended;
@@ -288,5 +296,116 @@ export class MotifEngine {
       if (checkFound) checkable.push({ king: kSq, check: checkFound });
     }
     return checkable;
+  }
+
+  /**
+   * Extrait de manière 100 % déterministe la structure de pions, le
+   * développement et l'ouverture des colonnes près du roi.
+   */
+  public static detectPositionalFeatures(cb: Board): PositionalFeatures {
+    const result: PositionalFeatures = {
+      doubledPawns: { white: [], black: [] },
+      isolatedPawns: { white: [], black: [] },
+      passedPawns: { white: [], black: [] },
+      undevelopedMinors: { white: [], black: [] },
+      openFilesNearKing: { white: [], black: [] },
+    };
+
+    for (const color of COLORS) {
+      const oppColor = opposite(color);
+      const myPawns = cb[color].intersect(cb.pawn);
+      const oppPawns = cb[oppColor].intersect(cb.pawn);
+
+      const pawnsByFile: Square[][] = Array.from({ length: 8 }, () => []);
+      const oppPawnsByFile: Square[][] = Array.from({ length: 8 }, () => []);
+
+      for (const sq of myPawns) {
+        pawnsByFile[squareFile(sq)].push(sq);
+      }
+      for (const sq of oppPawns) {
+        oppPawnsByFile[squareFile(sq)].push(sq);
+      }
+
+      for (let file = 0; file < 8; file++) {
+        const filePawns = pawnsByFile[file];
+        if (filePawns.length >= 2) {
+          for (const sq of filePawns) {
+            result.doubledPawns[color].push(makeSquare(sq));
+          }
+        }
+
+        const hasLeftNeighbor = file > 0 && pawnsByFile[file - 1].length > 0;
+        const hasRightNeighbor = file < 7 && pawnsByFile[file + 1].length > 0;
+        if (filePawns.length > 0 && !hasLeftNeighbor && !hasRightNeighbor) {
+          for (const sq of filePawns) {
+            result.isolatedPawns[color].push(makeSquare(sq));
+          }
+        }
+
+        for (const sq of filePawns) {
+          const rank = squareRank(sq);
+          const adjFiles = [file - 1, file, file + 1].filter(f => f >= 0 && f < 8);
+          let blockedByEnemyPawn = false;
+          for (const af of adjFiles) {
+            for (const oppSq of oppPawnsByFile[af]) {
+              const oppRank = squareRank(oppSq);
+              if (color === 'white' ? oppRank > rank : oppRank < rank) {
+                blockedByEnemyPawn = true;
+                break;
+              }
+            }
+            if (blockedByEnemyPawn) break;
+          }
+          if (!blockedByEnemyPawn) {
+            result.passedPawns[color].push(makeSquare(sq));
+          }
+        }
+      }
+
+      // Pièces mineures encore sur leur case initiale
+      const homeMinors: Array<[string, Role]> =
+        color === 'white'
+          ? [['b1', 'knight'], ['g1', 'knight'], ['c1', 'bishop'], ['f1', 'bishop']]
+          : [['b8', 'knight'], ['g8', 'knight'], ['c8', 'bishop'], ['f8', 'bishop']];
+
+      for (const [sqName, role] of homeMinors) {
+        const sq = parseSquare(sqName);
+        if (sq !== undefined) {
+          const piece = cb.get(sq);
+          if (piece && piece.color === color && piece.role === role) {
+            result.undevelopedMinors[color].push(sqName);
+          }
+        }
+      }
+
+      // Colonnes sans pion ami devant/autour du roi
+      const kingSq = cb.kingOf(color);
+      if (kingSq !== undefined) {
+        const kFile = squareFile(kingSq);
+        for (const f of [kFile - 1, kFile, kFile + 1]) {
+          if (f < 0 || f > 7) continue;
+          if (pawnsByFile[f].length === 0) {
+            result.openFilesNearKing[color].push(String.fromCharCode(97 + f));
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /** Analyse complète (tactique + positionnelle) à partir d'une chaîne FEN. */
+  public static analyzeFen(fen: string): FullBoardMotifs | null {
+    try {
+      const setup = parseFen(fen).unwrap();
+      return {
+        pins: this.detectPins(setup.board),
+        undefended: this.detectUndefended(setup.board, setup.epSquare),
+        checkable: this.detectCheckable(setup.board, setup.epSquare, setup.castlingRights),
+        positional: this.detectPositionalFeatures(setup.board),
+      };
+    } catch {
+      return null;
+    }
   }
 }
