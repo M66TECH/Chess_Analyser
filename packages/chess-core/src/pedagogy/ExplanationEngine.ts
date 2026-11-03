@@ -1,5 +1,5 @@
 import { RiverAPI } from './RiverAPI';
-import { uciToSan } from '../utils/san';
+import { uciToSan, pvToSan } from '../utils/san';
 import {
   buildExplanationContext,
   pieceToFr,
@@ -7,65 +7,227 @@ import {
   type ExplanationContext,
   type Insight,
   type PlayerLevel,
+  type VerifiedTacticalFacts,
 } from './ExplanationContext';
+import { MotifEngine } from './MotifEngine';
 import type { MoveRecord } from './types';
 
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
+import { makeSquare, parseUci } from 'chessops/util';
+import type { Role } from 'chessops/types';
+
+const ROLE_VALUE: Record<Role, number> = {
+  pawn: 1,
+  knight: 3,
+  bishop: 3,
+  rook: 5,
+  queen: 9,
+  king: 0,
+};
+
+function computeMaterialForColor(pos: Chess, color: 'white' | 'black'): number {
+  let sum = 0;
+  for (const sq of pos.board[color]) {
+    const p = pos.board.get(sq);
+    if (p) sum += ROLE_VALUE[p.role];
+  }
+  return sum;
+}
+
+/**
+ * Simule les premiers coups UCI d'une variante et calcule le bilan matériel net
+ * du point de vue de `playerColor` par rapport à `fenAfter`.
+ */
+function simulatePvMaterialDelta(
+  fenAfter: string,
+  pvUci: string[] | undefined,
+  playerColor: 'white' | 'black',
+  maxPlies = 6
+): number {
+  if (!pvUci || pvUci.length === 0) return 0;
+  try {
+    const setup = parseFen(fenAfter).unwrap();
+    const pos = Chess.fromSetup(setup).unwrap();
+    const oppColor: 'white' | 'black' = playerColor === 'white' ? 'black' : 'white';
+    const initialDiff = computeMaterialForColor(pos, playerColor) - computeMaterialForColor(pos, oppColor);
+
+    for (const uci of pvUci.slice(0, maxPlies)) {
+      const move = parseUci(uci);
+      if (!move || !pos.isLegal(move)) break;
+      pos.play(move);
+    }
+
+    const finalDiff = computeMaterialForColor(pos, playerColor) - computeMaterialForColor(pos, oppColor);
+    return finalDiff - initialDiff;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Extrait de manière 100 % déterministe les différences tactiques et
+ * positionnelles entre `fenBefore` et `fenAfter` ainsi que la réfutation SAN.
+ */
+function extractVerifiedTacticalFacts(record: MoveRecord): VerifiedTacticalFacts | undefined {
+  try {
+    const setupAfter = parseFen(record.fenAfter).unwrap();
+    const motifsBefore = MotifEngine.analyzeFen(record.fenBefore);
+    const motifsAfter = MotifEngine.analyzeFen(record.fenAfter);
+    if (!motifsBefore || !motifsAfter) return undefined;
+
+    const playerColor = record.color;
+    const enemyColor: 'white' | 'black' = playerColor === 'white' ? 'black' : 'white';
+
+    const beforeUndefendedSquares = new Set(motifsBefore.undefended.map(u => u.square));
+    const newlyUndefendedOwn: VerifiedTacticalFacts['newly_undefended_own_pieces'] = [];
+    const newlyUndefendedEnemy: VerifiedTacticalFacts['newly_undefended_enemy_pieces'] = [];
+
+    for (const u of motifsAfter.undefended) {
+      const piece = setupAfter.board.get(u.square);
+      if (!piece) continue;
+      const sqName = makeSquare(u.square);
+      const attackerSqName = makeSquare(u.principalAttacker);
+      const pieceName = pieceToFr(piece.role) ?? piece.role;
+
+      if (piece.color === playerColor && !beforeUndefendedSquares.has(u.square)) {
+        newlyUndefendedOwn.push({
+          square: sqName,
+          piece: pieceName,
+          loss: u.materialLoss,
+          attacker_square: attackerSqName,
+        });
+      } else if (piece.color === enemyColor && !beforeUndefendedSquares.has(u.square)) {
+        newlyUndefendedEnemy.push({
+          square: sqName,
+          piece: pieceName,
+          gain: u.materialLoss,
+        });
+      }
+    }
+
+    const beforePinnedSquares = new Set(motifsBefore.pins.map(p => p.pinned));
+    const newPinsAgainstPlayer: VerifiedTacticalFacts['new_pins_against_player'] = [];
+    const newPinsByPlayer: VerifiedTacticalFacts['new_pins_by_player'] = [];
+
+    for (const p of motifsAfter.pins) {
+      if (beforePinnedSquares.has(p.pinned)) continue;
+      const pinnedPiece = setupAfter.board.get(p.pinned);
+      const pinnerPiece = setupAfter.board.get(p.pinner);
+      const targetPiece = setupAfter.board.get(p.target);
+      if (!pinnedPiece || !pinnerPiece || !targetPiece) continue;
+
+      const pinDescriptor = {
+        pinned_square: makeSquare(p.pinned),
+        pinned_piece: pieceToFr(pinnedPiece.role) ?? pinnedPiece.role,
+        pinner_square: makeSquare(p.pinner),
+        pinner_piece: pieceToFr(pinnerPiece.role) ?? pinnerPiece.role,
+        target_square: makeSquare(p.target),
+        is_absolute: targetPiece.role === 'king',
+      };
+
+      if (pinnedPiece.color === playerColor) {
+        newPinsAgainstPlayer.push(pinDescriptor);
+      } else {
+        newPinsByPlayer.push(pinDescriptor);
+      }
+    }
+
+    const posBefore = motifsBefore.positional;
+    const posAfter = motifsAfter.positional;
+
+    const diffList = (beforeArr: string[], afterArr: string[]) =>
+      afterArr.filter(sq => !beforeArr.includes(sq));
+
+    const refutationPvSan =
+      record.refutationPv && record.refutationPv.length > 0
+        ? pvToSan(record.fenAfter, record.refutationPv.slice(0, 5))
+        : [];
+
+    const materialDeltaInPv = simulatePvMaterialDelta(
+      record.fenAfter,
+      record.refutationPv,
+      playerColor,
+      6
+    );
+
+    return {
+      fen_before: record.fenBefore,
+      fen_after: record.fenAfter,
+      refutation_pv_san: refutationPvSan,
+      material_delta_in_pv: materialDeltaInPv,
+      newly_undefended_own_pieces: newlyUndefendedOwn,
+      newly_undefended_enemy_pieces: newlyUndefendedEnemy,
+      new_pins_against_player: newPinsAgainstPlayer,
+      new_pins_by_player: newPinsByPlayer,
+      positional_changes: {
+        doubled_pawns_created: diffList(posBefore.doubledPawns[playerColor], posAfter.doubledPawns[playerColor]),
+        isolated_pawns_created: diffList(posBefore.isolatedPawns[playerColor], posAfter.isolatedPawns[playerColor]),
+        passed_pawns_created: diffList(posBefore.passedPawns[playerColor], posAfter.passedPawns[playerColor]),
+        undeveloped_minors_count: posAfter.undevelopedMinors[playerColor].length,
+        open_files_near_king: posAfter.openFilesNearKing[playerColor],
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Coach IA : transforme le VERDICT de l'analyse Lichess en explications
  * accessibles. Il ne remplace jamais l'analyse : il la traduit.
  *
- * Architecture volontairement en deux temps :
- *   1. `buildContext` extrait des faits vérifiables (évaluations, classification,
- *      meilleur coup, théorie) → le modèle ne peut pas inventer un coup ;
- *   2. le modèle rédige des fiches courtes, une par axe pédagogique.
+ * Architecture en deux temps :
+ *   1. `buildContext` extrait des faits 100 % vérifiables (évaluations,
+ *      classification, meilleur coup, variantes SAN, pièces en prise SEE,
+ *      clouages et structure de pions) ;
+ *   2. le modèle rédige des fiches courtes strictement bornées à ces faits.
  *
- * En cas d'échec du modèle, `fallbackCard` produit une explication déterministe
- * à partir des seuls chiffres : l'utilisateur a toujours une réponse.
+ * En cas d'échec du modèle (ou lors d'un import PGN massif), `fallbackCard`
+ * produit une explication déterministe riche à partir des preuves calculées.
  */
 export class ExplanationEngine {
   private static readonly SYSTEM_PROMPT = `# Rôle
-Tu es ChessCoach, entraîneur d'échecs francophone pour débutants et joueurs intermédiaires.
-Tu expliques une analyse DÉJÀ calculée par Lichess. Tu ne joues pas, tu ne recalcules pas, tu expliques.
+Tu es ChessCoach, entraîneur d'échecs francophone rigoureux et bienveillant.
+Tu expliques une analyse DÉJÀ calculée par Stockfish/Lichess et par notre extracteur géométrique (SEE, clouages, structure de pions). Tu ne recalcules pas, tu expliques les faits prouvés.
 
-# Sources de vérité
-Le JSON fourni est ta seule source. Tu ne peux citer que :
-- le coup joué (played.san) et le meilleur coup (best.san) ;
-- la pièce déplacée (played.piece) et la pièce capturée (played.captured) si renseignées ;
-- les évaluations (evaluation.*) et le verdict (verdict.*) ;
-- les données d'ouverture (opening.*).
-Si une information manque, ne l'invente pas : dis simplement qu'elle n'est pas disponible.
+# Hiérarchie stricte des preuves (INTERDICTION D'HALLUCINER)
+Le JSON fourni est ta seule source de vérité. Distingue obligatoirement :
+1. Les FAITS ÉTABLIS PAR LE MOTEUR : coup joué (played.san), meilleur coup (best.san), évaluations (evaluation.*) et verdict (verdict.*).
+2. LES CONSÉQUENCES DES VARIANTES : la variante recommandée (best.pv_san) et la réfutation adverse (tactical_facts.refutation_pv_san, tactical_facts.material_delta_in_pv).
+3. LES MOTIFS VÉRIFIÉS SUR L'ÉCHIQUIER (tactical_facts.*) :
+   - Pièces laissées en prise : tactical_facts.newly_undefended_own_pieces
+   - Pièces adverses attaquées : tactical_facts.newly_undefended_enemy_pieces
+   - Clouages : tactical_facts.new_pins_against_player et tactical_facts.new_pins_by_player
+   - Structure de pions et roi : tactical_facts.positional_changes
+4. LES INTERPRÉTATIONS POSITIONNELLES : si aucun motif tactique n'est présent dans tactical_facts, formule l'explication stratégique avec prudence (« ce coup cède du contrôle central / perd un temps ») sans JAMAIS inventer une fourchette, un clouage ou une pièce en prise absents de tactical_facts.
 
 # Ce que tu dois expliquer, dans cet ordre
-1. played_move — ce que le coup joué fait concrètement (attaque, défend, développe, capture, crée une menace).
-2. mistake — seulement si verdict.classification vaut inaccuracy, mistake ou blunder : pourquoi c'est mauvais.
-3. missed_move — seulement si best.san existe et diffère du coup joué : ce que le meilleur coup apportait.
-4. consequence — la conséquence tactique ou stratégique immédiate (pièce en prise, roi exposé, colonne ouverte, tempo perdu...).
+1. played_move — ce que le coup joué fait concrètement (pièce déplacée, prise confirmée par played.captured, ou menace vérifiée).
+2. mistake — seulement si verdict.classification vaut inaccuracy, mistake ou blunder : pourquoi c'est mauvais (cite la pièce en prise de newly_undefended_own_pieces ou la réponse adverse refutation_pv_san[0] si présentes).
+3. missed_move — seulement si best.san existe et diffère du coup joué : ce que le meilleur coup best.san (et best.pv_san) apportait.
+4. consequence — la conséquence tactique ou stratégique immédiate prouvée par les données.
 5. good_decision — si le coup est bon/meilleur/brillant : pourquoi c'était le bon choix.
 
 # Règles de rédaction
-- Français simple. Aucun jargon non expliqué. Pas de « centipawn » : parle en « pions d'avantage » ou « chances ».
+- Français simple et précis. Pas de « centipawn » : parle en « pions d'avantage » ou « chances ».
 - Une idée par phrase, 25 mots maximum par phrase.
-- N'affirme JAMAIS qu'un coup gagne du matériel sans que played.captured le confirme.
-- Ne parle jamais de tactique absente des données fournies.
-- Si opening.is_theory_move est vrai : ce coup est de la théorie humaine. Ne le présente jamais comme une erreur, même si Stockfish préfère autre chose. Explique l'idée de la ligne.
-- Si opening.in_book est faux, ignore la théorie et appuie-toi uniquement sur les évaluations.
-- Ton chaleureux, jamais condescendant. On encourage, on ne juge pas.
+- N'affirme JAMAIS qu'un coup gagne du matériel sans que played.captured ou tactical_facts.material_delta_in_pv le confirme.
+- N'invente JAMAIS un clouage, une fourchette ou une pièce en prise qui ne figure pas dans tactical_facts.
+- Si opening.is_theory_move est vrai : ce coup est de la théorie humaine. Ne le présente jamais comme une erreur.
 
 # Séquences de mat (context.mate_sequence)
-- « created » : à cause de ce coup, le joueur va se faire mater de force. C'est LA conséquence à expliquer en premier (« le mat est désormais inévitable »).
-- « lost » : le joueur avait un mat forcé et l'a laissé filer. Dis ce qui est perdu, sans dramatiser si evaluation_after montre qu'il reste largement gagnant.
-- « delayed » : le mat reste forcé, simplement en plus de coups. Ce n'est PAS une erreur, ne le présente pas comme telle.
+- « created » : à cause de ce coup, le joueur subit un mat forcé (« le mat est désormais inévitable »).
+- « lost » : le joueur avait un mat forcé et l'a laissé filer.
+- « delayed » : le mat reste forcé, simplement en plus de coups. Ce n'est PAS une erreur.
 
 # Format
 Réponds UNIQUEMENT par un objet JSON valide, sans texte autour :
 {"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
 Les valeurs possibles de "kind" sont exactement : played_move, missed_move, mistake, good_decision, consequence.`;
 
-  /** Génère la fiche pédagogique d'un coup analysé. */
+  /** Génère la fiche pédagogique d'un coup analysé (avec appel IA + fallback local). */
   public static async generateCard(
     record: MoveRecord,
     level: PlayerLevel = 'intermediaire',
@@ -75,7 +237,7 @@ Les valeurs possibles de "kind" sont exactement : played_move, missed_move, mist
 
     try {
       const raw = await RiverAPI.complete(this.buildPrompt(context, level), this.SYSTEM_PROMPT, {
-        temperature: 0.4,
+        temperature: 0.3,
         maxTokens: 900,
       });
       const parsed = this.parseCard(raw);
@@ -89,9 +251,19 @@ Les valeurs possibles de "kind" sont exactement : played_move, missed_move, mist
     return this.fallbackCard(context, level);
   }
 
+  /** Génère immédiatement une fiche pédagogique déterministe sans appel réseau. */
+  public static buildLocalCard(
+    record: MoveRecord,
+    level: PlayerLevel = 'intermediaire',
+    previousClassification?: string | null
+  ): CoachCard {
+    const context = this.buildContext(record, previousClassification);
+    return this.fallbackCard(context, level);
+  }
+
   /**
-   * Construit le dossier factuel. Tout ce qui est envoyé au modèle est extrait
-   * du `MoveRecord`, jamais de la position seule.
+   * Construit le dossier factuel complet (évaluations + variantes SAN + motifs
+   * tactiques SEE/clouages + structure de pions).
    */
   public static buildContext(record: MoveRecord, previousClassification?: string | null): ExplanationContext {
     let playedPiece: string | undefined;
@@ -119,13 +291,22 @@ Les valeurs possibles de "kind" sont exactement : played_move, missed_move, mist
       // Le contexte reste utilisable même si la position est illisible.
     }
 
+    const bestPvSan =
+      record.bestPv && record.bestPv.length > 0
+        ? pvToSan(record.fenBefore, record.bestPv.slice(0, 5))
+        : undefined;
+
+    const tacticalFacts = extractVerifiedTacticalFacts(record);
+
     return buildExplanationContext({
       record,
       playedPiece,
       capturedPiece,
       bestMoveSan: record.bestMove ? uciToSan(record.fenBefore, record.bestMove) : null,
+      bestPvSan,
       previousClassification,
       materialCount,
+      tacticalFacts,
     });
   }
 
@@ -194,11 +375,12 @@ ${JSON.stringify(context, null, 2)}
   }
 
   /**
-   * Explication déterministe, sans réseau. Sert de secours quand le modèle est
-   * indisponible : l'analyse Lichess reste lisible sans IA.
+   * Explication déterministe enrichie par les faits tactiques/positionnels
+   * vérifiés (sans réseau). Sert de secours quand le modèle est indisponible
+   * et lors des analyses complètes de PGN.
    */
   public static fallbackCard(context: ExplanationContext, level: PlayerLevel): CoachCard {
-    const { played, best, verdict, evaluation } = context;
+    const { played, best, verdict, evaluation, context: moveCtx, tactical_facts: facts } = context;
     const cp = (v: number | null) => (v === null ? '—' : `${v > 0 ? '+' : ''}${(v / 100).toFixed(1)}`);
 
     const label: Record<string, string> = {
@@ -222,22 +404,67 @@ ${JSON.stringify(context, null, 2)}
       text: `${played.san} déplace ${pieceLabel}${capture}.`,
     });
 
-    const isError = verdict.classification === 'inaccuracy' || verdict.classification === 'mistake' || verdict.classification === 'blunder';
+    const isError =
+      verdict.classification === 'inaccuracy' ||
+      verdict.classification === 'mistake' ||
+      verdict.classification === 'blunder';
+
     if (isError) {
       const loss = evaluation.player_loss_cp;
-      insights.push({
-        kind: 'mistake',
-        text:
-          loss !== null
-            ? `Ce coup fait perdre environ ${(loss / 100).toFixed(1)} pion(s) de valeur : ${cp(evaluation.before)} → ${cp(evaluation.after)}.`
-            : "Ce coup détériore la position selon l'analyse.",
-      });
+      if (moveCtx.mate_sequence === 'created') {
+        insights.push({
+          kind: 'mistake',
+          text: 'Ce coup permet un mat forcé adverse : le mat est désormais inévitable.',
+        });
+      } else if (moveCtx.mate_sequence === 'lost') {
+        insights.push({
+          kind: 'mistake',
+          text: 'Ce coup laisse échapper une séquence de mat forcé.',
+        });
+      } else if (facts && facts.newly_undefended_own_pieces.length > 0) {
+        const hanging = facts.newly_undefended_own_pieces[0];
+        insights.push({
+          kind: 'mistake',
+          text: `Ce coup laisse votre ${hanging.piece} en ${hanging.square} sans défense suffisante (${cp(evaluation.before)} → ${cp(evaluation.after)}).`,
+        });
+      } else if (facts && facts.new_pins_against_player.length > 0) {
+        const pin = facts.new_pins_against_player[0];
+        insights.push({
+          kind: 'mistake',
+          text: `Ce coup expose votre ${pin.pinned_piece} en ${pin.pinned_square} à un clouage par ${pin.pinner_square} (${cp(evaluation.before)} → ${cp(evaluation.after)}).`,
+        });
+      } else {
+        insights.push({
+          kind: 'mistake',
+          text:
+            loss !== null
+              ? `Ce coup fait perdre environ ${(loss / 100).toFixed(1)} pion(s) de valeur : ${cp(evaluation.before)} → ${cp(evaluation.after)}.`
+              : "Ce coup détériore la position selon l'analyse.",
+        });
+      }
+
+      if (facts && facts.refutation_pv_san.length > 0 && level !== 'debutant') {
+        const refutationLine = facts.refutation_pv_san.slice(0, 3).join(' ');
+        insights.push({
+          kind: 'consequence',
+          text: `L'adversaire peut punir ce coup par la suite : ${refutationLine}.`,
+        });
+      } else if (facts && facts.positional_changes.doubled_pawns_created.length > 0) {
+        insights.push({
+          kind: 'consequence',
+          text: `La structure de pions est affaiblie (pions doublés en ${facts.positional_changes.doubled_pawns_created.join(', ')}).`,
+        });
+      }
     }
 
     if (best?.san && best.san !== played.san) {
+      const pvContinuation =
+        level !== 'debutant' && best.pv_san && best.pv_san.length > 1
+          ? ` (suite : ${best.pv_san.slice(0, 3).join(' ')})`
+          : '';
       insights.push({
         kind: 'missed_move',
-        text: `Le meilleur coup était ${best.san}, qui gardait la position plus solide.`,
+        text: `Le meilleur coup était ${best.san}${pvContinuation}, qui gardait la position plus solide.`,
       });
     }
 
@@ -247,17 +474,31 @@ ${JSON.stringify(context, null, 2)}
         text: `Le gain de matériel se confirme : ${played.captured} disparaît de l'échiquier.`,
       });
     } else if (!isError) {
-      insights.push({
-        kind: 'good_decision',
-        text: 'Le coup respecte l\'évaluation de la position et ne concède rien.',
-      });
+      if (facts && facts.new_pins_by_player.length > 0) {
+        const pin = facts.new_pins_by_player[0];
+        insights.push({
+          kind: 'good_decision',
+          text: `Excellent choix qui cloue le ${pin.pinned_piece} adverse en ${pin.pinned_square}.`,
+        });
+      } else if (facts && facts.newly_undefended_enemy_pieces.length > 0) {
+        const target = facts.newly_undefended_enemy_pieces[0];
+        insights.push({
+          kind: 'good_decision',
+          text: `Ce coup met directement sous pression le ${target.piece} adverse en ${target.square}.`,
+        });
+      } else {
+        insights.push({
+          kind: 'good_decision',
+          text: "Le coup respecte l'évaluation de la position et ne concède rien.",
+        });
+      }
     }
 
     return {
       headline: label[verdict.classification] ?? 'Coup joué',
       insights,
       takeaway: isError
-        ? 'Cherchez d\'abord les coups actifs de l\'adversaire avant de jouer.'
+        ? "Cherchez d'abord les coups actifs et captures de l'adversaire avant de jouer."
         : 'Continuez avec des coups qui ne laissent aucune pièce sans défense.',
       level,
     };

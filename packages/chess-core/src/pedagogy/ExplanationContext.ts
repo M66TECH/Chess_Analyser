@@ -32,14 +32,60 @@ export interface CoachCard {
 
 export type PlayerLevel = 'debutant' | 'intermediaire' | 'avance';
 
+export interface VerifiedTacticalFacts {
+  fen_before: string;
+  fen_after: string;
+  /** Suite concrète de réfutation / réponse adverse en notation SAN. */
+  refutation_pv_san: string[];
+  /** Bilan matériel net (en pions, du point de vue du joueur) au bout de la PV adverse. */
+  material_delta_in_pv: number;
+  /** Pièces du joueur nouvellement laissées en prise (SEE > 0 pour l'adversaire). */
+  newly_undefended_own_pieces: Array<{
+    square: string;
+    piece: string;
+    loss: number;
+    attacker_square: string;
+  }>;
+  /** Pièces adverses nouvellement mises en prise par le coup joué. */
+  newly_undefended_enemy_pieces: Array<{
+    square: string;
+    piece: string;
+    gain: number;
+  }>;
+  /** Nouveaux clouages subis par le joueur après son coup. */
+  new_pins_against_player: Array<{
+    pinned_square: string;
+    pinned_piece: string;
+    pinner_square: string;
+    pinner_piece: string;
+    target_square: string;
+    is_absolute: boolean;
+  }>;
+  /** Nouveaux clouages infligés à l'adversaire par le coup joué. */
+  new_pins_by_player: Array<{
+    pinned_square: string;
+    pinned_piece: string;
+    pinner_square: string;
+    pinner_piece: string;
+    target_square: string;
+    is_absolute: boolean;
+  }>;
+  /** Changements objectifs de structure de pions et de sécurité du roi. */
+  positional_changes: {
+    doubled_pawns_created: string[];
+    isolated_pawns_created: string[];
+    passed_pawns_created: string[];
+    undeveloped_minors_count: number;
+    open_files_near_king: string[];
+  };
+}
+
 /**
  * Construit le dossier factuel transmis à l'IA.
  *
  * Principe : le modèle ne reçoit QUE des données vérifiables issues de
- * l'analyse Lichess (évaluations, classification, meilleur coup, théorie).
- * Il ne voit jamais la position brute sans contexte, ce qui l'empêche
- * d'inventer des tactiques. C'est le garde-fou central contre les
- * hallucinations sur un jeu aussi précis que les échecs.
+ * l'analyse Lichess (évaluations, classification, meilleur coup, variantes SAN,
+ * motifs tactiques SEE/clouages et structure de pions calculés sur l'échiquier).
  */
 export interface ExplanationContext {
   played: {
@@ -56,8 +102,10 @@ export interface ExplanationContext {
     uci: string | null;
     /** Perte, en centipions, entre le coup joué et ce meilleur coup. */
     centipawn_gap: number | null;
+    /** Suite de la meilleure variante en SAN (ex: ["e4", "e5", "Nf3"]). */
+    pv_san?: string[];
   };
-  /** Évaluations en pions, positive = avantage des Blancs. */
+  /** Évaluations en centipions, positive = avantage des Blancs. */
   evaluation: {
     before: number | null;
     after: number | null;
@@ -86,6 +134,8 @@ export interface ExplanationContext {
     /** Séquence de mat détectée par le jugement Lichess, si applicable. */
     mate_sequence: 'created' | 'lost' | 'delayed' | null;
   };
+  /** Faits tactiques et positionnels déterministes extraits de la position et des PV. */
+  tactical_facts?: VerifiedTacticalFacts;
 }
 
 const PIECE_FR: Record<string, string> = {
@@ -116,8 +166,10 @@ export interface BuildContextArgs {
   playedPiece?: string;
   capturedPiece?: string | null;
   bestMoveSan?: string | null;
+  bestPvSan?: string[];
   previousClassification?: string | null;
   materialCount?: number;
+  tacticalFacts?: VerifiedTacticalFacts;
 }
 
 /** Assemble le dossier factuel à partir d'un `MoveRecord` analysé. */
@@ -126,8 +178,10 @@ export function buildExplanationContext({
   playedPiece,
   capturedPiece,
   bestMoveSan,
+  bestPvSan,
   previousClassification,
   materialCount,
+  tacticalFacts,
 }: BuildContextArgs): ExplanationContext {
   const isWhite = record.color === 'white';
 
@@ -148,7 +202,26 @@ export function buildExplanationContext({
   const centipawnGap =
     !isBest && playerLoss !== null && playerLoss > 0 ? playerLoss : null;
 
-  return {
+  // Normalisation de `mateBefore` (POV joueur au trait avant le coup) et
+  // `mateAfter` (POV adversaire au trait après le coup) vers le POV des Blancs.
+  const mateBeforeWhitePov =
+    typeof record.mateBefore === 'number'
+      ? record.mateBefore === 0
+        ? 0
+        : isWhite
+          ? record.mateBefore
+          : -record.mateBefore
+      : null;
+  const mateAfterWhitePov =
+    typeof record.mateAfter === 'number'
+      ? record.mateAfter === 0
+        ? 0
+        : isWhite
+          ? -record.mateAfter
+          : record.mateAfter
+      : null;
+
+  const ctx: ExplanationContext = {
     played: {
       san: record.san,
       uci: record.playedMove,
@@ -164,14 +237,15 @@ export function buildExplanationContext({
           san: bestMoveSan ?? record.bestMove,
           uci: record.bestMove,
           centipawn_gap: centipawnGap,
+          ...(bestPvSan && bestPvSan.length > 0 ? { pv_san: bestPvSan } : {}),
         }
       : undefined,
     evaluation: {
       before: beforeCp !== null ? Math.round(beforeCp) : null,
       after: afterCp !== null ? Math.round(afterCp) : null,
       player_loss_cp: playerLoss,
-      mate_before: record.mateBefore ?? null,
-      mate_after: record.mateAfter ?? null,
+      mate_before: mateBeforeWhitePov,
+      mate_after: mateAfterWhitePov,
     },
     verdict: {
       classification: record.classification,
@@ -196,4 +270,10 @@ export function buildExplanationContext({
       mate_sequence: record.mateSequence ?? null,
     },
   };
+
+  if (tacticalFacts) {
+    ctx.tactical_facts = tacticalFacts;
+  }
+
+  return ctx;
 }

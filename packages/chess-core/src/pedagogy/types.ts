@@ -18,6 +18,12 @@ export interface MoveAnalysis {
   fenAfter: string;
   playedMove: string;
   bestMove?: string;
+  /** Variante principale de Stockfish avant le coup (coups UCI). */
+  bestPv?: string[];
+  /** Variante principale de Stockfish après le coup (réfutation / suite adverse en UCI). */
+  refutationPv?: string[];
+  /** Écart de chances de gain entre PV1 et PV2 avant le coup (détection de coup forcé/unique). */
+  multiPvGap?: number;
   cpBefore: number;
   mateBefore?: number;
   cpAfter: number;

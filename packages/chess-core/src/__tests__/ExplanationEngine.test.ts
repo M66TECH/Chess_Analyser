@@ -246,4 +246,36 @@ describe('ExplanationEngine.generateCard', () => {
     expect(prompt).toContain('"classification": "mistake"');
     expect(prompt).toContain('"move_number": 1');
   });
+
+  it('extrait et cite dans la fiche locale la pièce laissée en prise et la variante de réfutation', () => {
+    // Blancs jouent 1. e4 e5 2. Nf3 Nc6, puis dans une position où le cavalier va en e5 attaqué par c6
+    const fenBefore = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
+    const fenAfter = 'r1bqkbnr/pppp1ppp/2n5/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 3';
+    const blunderRec = record({
+      fenBefore,
+      fenAfter,
+      san: 'Nxe5',
+      playedMove: 'f3e5',
+      bestMove: 'f1b5',
+      bestPv: ['f1b5', 'a7a6', 'b5a4'],
+      refutationPv: ['c6e5', 'd2d4'],
+      classification: 'blunder',
+      cpBefore: 30,
+      cpAfter: -280,
+      accuracy: 10,
+      moveNumber: 3,
+      color: 'white',
+    });
+
+    const card = ExplanationEngine.buildLocalCard(blunderRec, 'intermediaire');
+    expect(card.headline).toBe('Gaffe');
+    // La fiche mentionne le cavalier laissé en e5 et la punition Nxe5
+    const mistakeText = card.insights.find(i => i.kind === 'mistake')?.text ?? '';
+    expect(mistakeText).toContain('cavalier');
+    expect(mistakeText).toContain('e5');
+    const consequenceText = card.insights.find(i => i.kind === 'consequence')?.text ?? '';
+    expect(consequenceText).toContain('Nxe5');
+    const missedText = card.insights.find(i => i.kind === 'missed_move')?.text ?? '';
+    expect(missedText).toContain('Bb5');
+  });
 });
