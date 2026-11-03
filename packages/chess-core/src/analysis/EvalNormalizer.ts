@@ -62,6 +62,7 @@ export class EvalNormalizer {
       return this.mateToCp(mate, sideToMove);
     }
     const raw = ceilCp(cp ?? 0);
+    if (raw === 0) return 0;
     return sideToMove === 'white' ? raw : -raw;
   }
 

@@ -34,6 +34,9 @@ export interface LichessEvalScore {
   mate?: number;
 }
 
+/** `Cp.INITIAL` de scalachess (`Cp(15)`). */
+export const INITIAL_CP = 15;
+
 /** `Cp.CEILING` de scalachess. */
 export const CP_CEILING = 1000;
 
@@ -214,8 +217,8 @@ export const gameAccuracy = (
   cps: Array<number | undefined>,
   startColor: 'white' | 'black'
 ): { white: number; black: number } => {
-  // Étape 1 — Lichess ajoute l'évaluation initiale (0 cp) en tête.
-  const allWinPercents: Array<WinPercent | undefined> = [0, ...cps].map(cp =>
+  // Étape 1 — Lichess ajoute l'évaluation initiale `Cp.initial` (+15 cp) en tête.
+  const allWinPercents: Array<WinPercent | undefined> = [INITIAL_CP, ...cps].map(cp =>
     cp === undefined ? undefined : winPercentFromCentiPawns(cp)
   );
 
@@ -233,11 +236,14 @@ export const gameAccuracy = (
   }
 
   const weights: Array<number | undefined> = windows.map(w => {
+    // En Scala (`AccuracyPercent.scala#L86-L87`) : `xs.flatten` conserve les
+    // valeurs définies et `Maths.standardDeviation` retourne `Some(sd)` dès
+    // qu'il y a au moins 2 éléments, puis `.so(_.squeeze(0.5, 12))` borne
+    // même un écart-type nul (`sd === 0`) à `0.5`.
     const defined = w.filter((v): v is number => v !== undefined);
-    if (defined.length !== w.length) return undefined;
+    if (defined.length < 2) return undefined;
     const sd = standardDeviation(defined);
-    // `so(_.squeeze(0.5, 12))` : un écart-type nul n'a pas de poids.
-    return sd > 0 ? squeeze(sd, 0.5, 12) : 0;
+    return squeeze(sd, 0.5, 12);
   });
 
   // Étape 4 — paires consécutives pondérées, par couleur.
@@ -285,4 +291,95 @@ export const gameAccuracy = (
   };
 
   return { white: forColor('white'), black: forColor('black') };
+};
+
+export interface PhaseDivision {
+  /** Index de demi-coup (ply) où débute le milieu de jeu (`null` si non atteint). */
+  middle: number | null;
+  /** Index de demi-coup (ply) où débute la finale (`null` si non atteinte). */
+  end: number | null;
+}
+
+export interface PhaseAccuracies {
+  opening?: { white: number; black: number };
+  middlegame?: { white: number; black: number };
+  endgame?: { white: number; black: number };
+  division: PhaseDivision;
+}
+
+/**
+ * Découpage de la partie en phases (ouverture / milieu / finale), porté depuis
+ * `scalachess` `Divider.scala` :
+ * - Milieu de jeu dès qu'il reste ≤ 10 pièces majeures/mineures, ou que la
+ *   première rangée est suffisamment développée / mélangée.
+ * - Finale dès qu'il reste ≤ 6 pièces majeures/mineures au total (hors rois et pions).
+ */
+export const dividePhases = (fens: string[]): PhaseDivision => {
+  let middle: number | null = null;
+  let end: number | null = null;
+
+  for (let ply = 0; ply < fens.length; ply++) {
+    const boardPart = fens[ply].split(' ')[0] ?? '';
+    const ranks = boardPart.split('/');
+    if (ranks.length !== 8) continue;
+
+    let majorsAndMinors = 0;
+    for (const ch of boardPart) {
+      if ('qrbnQRBN'.includes(ch)) majorsAndMinors++;
+    }
+
+    if (middle === null) {
+      // Compte les pièces encore sur leur rangée de départ (rangée 8 pour Noirs, 1 pour Blancs)
+      const countBackrankPieces = (rankStr: string, isWhiteRank: boolean): number => {
+        let count = 0;
+        for (const ch of rankStr) {
+          if (isWhiteRank && 'RNBQK'.includes(ch)) count++;
+          if (!isWhiteRank && 'rnbqk'.includes(ch)) count++;
+        }
+        return count;
+      };
+      const whiteBackrank = countBackrankPieces(ranks[7], true);
+      const blackBackrank = countBackrankPieces(ranks[0], false);
+
+      if (majorsAndMinors <= 10 || whiteBackrank < 4 || blackBackrank < 4 || ply >= 14) {
+        middle = ply;
+      }
+    }
+
+    if (middle !== null && end === null && majorsAndMinors <= 6) {
+      end = ply;
+      break;
+    }
+  }
+
+  return { middle, end };
+};
+
+/**
+ * Précision par phase (`AccuracyPercent.phaseAccuracies` de Lichess).
+ */
+export const phaseAccuracies = (
+  cps: Array<number | undefined>,
+  fens: string[],
+  startColor: 'white' | 'black' = 'white'
+): PhaseAccuracies => {
+  const division = dividePhases(fens);
+  const colorAtPly = (ply: number): 'white' | 'black' =>
+    ply % 2 === 0 ? startColor : startColor === 'white' ? 'black' : 'white';
+
+  const openingEnd = division.middle ?? cps.length;
+  const middleEnd = division.end ?? cps.length;
+
+  const opening =
+    openingEnd >= 2 ? gameAccuracy(cps.slice(0, openingEnd), startColor) : undefined;
+  const middlegame =
+    division.middle !== null && middleEnd - division.middle >= 2
+      ? gameAccuracy(cps.slice(division.middle, middleEnd), colorAtPly(division.middle))
+      : undefined;
+  const endgame =
+    division.end !== null && cps.length - division.end >= 2
+      ? gameAccuracy(cps.slice(division.end), colorAtPly(division.end))
+      : undefined;
+
+  return { opening, middlegame, endgame, division };
 };

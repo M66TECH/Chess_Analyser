@@ -27,14 +27,15 @@ function evaluation(overrides: Partial<EngineEvaluation>): EngineEvaluation {
 
 async function analyzeMove(
   beforeCp: number,
-  after: { cp?: number; mate?: number }
+  after: { cp?: number; mate?: number },
+  bestMoveBefore = 'd2d4'
 ) {
   const eventBus = new GameEventBus();
   const moveManager = new MoveManager();
   const pipeline = new AnalysisPipeline(eventBus, moveManager, new FakeEngine() as unknown as EngineManager);
 
   pipeline.initialize(START);
-  eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: beforeCp, pv: ['e2e4'] }));
+  eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: beforeCp, pv: [bestMoveBefore] }));
 
   const move = moveManager.playMove('e2e4');
   eventBus.emit('MovePlayed', {
@@ -66,15 +67,21 @@ describe('Conformité du jugement à Advice.scala (bout en bout)', () => {
   });
 
   it('coup neutre (POV adversaire -30) : best, précision ~100', async () => {
-    const record = await analyzeMove(30, { cp: -30 });
+    const record = await analyzeMove(30, { cp: -30 }, 'e2e4');
     expect(record.classification).toBe('best');
     expect(record.accuracy).toBe(100);
   });
 
   it('50 cp perdus : aucune erreur (0.0918 < 0.1) — classé best (meilleur coup joué)', async () => {
-    const record = await analyzeMove(50, { cp: 0 });
+    const record = await analyzeMove(50, { cp: 0 }, 'e2e4');
     expect(['good', 'best']).toContain(record.classification);
     expect(['inaccuracy', 'mistake', 'blunder']).not.toContain(record.classification);
+  });
+
+  it('ne pénalise jamais le meilleur coup de Stockfish même si l\'évaluation baisse par effet d\'horizon (Analysis.scala#L37)', async () => {
+    const record = await analyzeMove(150, { cp: 0 }, 'e2e4');
+    expect(record.classification).toBe('best');
+    expect(record.accuracy).toBe(100);
   });
 
   it('100 cp perdus : inaccuracy (0.1821 ≥ 0.1) — le verdict réel de Lichess', async () => {

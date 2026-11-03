@@ -60,31 +60,44 @@ export class MoveClassifier {
     const prevScore = options.prevScore;
     const nextScore = options.nextScore;
 
-    const accuracy = AccuracyScore.calculateMoveAccuracy(winDrop);
+    const accuracy = isBestMove ? 100 : AccuracyScore.calculateMoveAccuracy(winDrop);
     let classification: MoveClassification = 'good';
     let mateSequence: LichessMateSequence | undefined;
 
+    // 0. Règle fondamentale de Lichess (`AnalysisBuilder.scala#L87`,
+    // `Analysis.scala#L37`, `liveAnnotate.ts#L23`) : si le joueur a joué le
+    // meilleur coup recommandé par Stockfish (`playedMove === bestMove`),
+    // aucune pénalité (?! / ? / ??) ne peut lui être attribuée, même si
+    // l'évaluation fluctue d'un demi-coup à l'autre par effet d'horizon.
+    if (isBestMove) {
+      return { classification: 'best', accuracy: 100 };
+    }
+
     // 1. Jugement Lichess quand les scores sont disponibles.
     const advised = prevScore && nextScore ? judgeMove(prevScore, nextScore) : undefined;
+    const isMateDelayed =
+      prevScore?.mate !== undefined &&
+      prevScore.mate > 0 &&
+      nextScore?.mate !== undefined &&
+      nextScore.mate > 0;
+
     if (advised?.judgment) {
       classification = advised.judgment;
       mateSequence = advised.mateSequence;
-    } else if (winDrop >= 0.3) {
+    } else if (!isMateDelayed && winDrop >= 0.3) {
       // 2a. Barème d'erreurs identique à CpAdvice, appliqué quand les scores
       // bruts ne sont pas fournis (même échelle, mêmes seuils → aucune
       // divergence possible avec le jugement Lichess).
       classification = 'blunder';
-    } else if (winDrop >= 0.2) {
+    } else if (!isMateDelayed && winDrop >= 0.2) {
       classification = 'mistake';
-    } else if (winDrop >= 0.1) {
+    } else if (!isMateDelayed && winDrop >= 0.1) {
       classification = 'inaccuracy';
     } else if (winDrop <= -0.1) {
       // 2b. Classes positives (sans équivalent serveur chez lila).
-      classification = isBestMove ? 'best' : 'brilliant';
+      classification = 'brilliant';
     } else if (winDrop <= -0.05) {
-      classification = isBestMove ? 'best' : 'great';
-    } else if (isBestMove) {
-      classification = 'best';
+      classification = 'great';
     } else {
       classification = 'good';
     }

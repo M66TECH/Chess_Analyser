@@ -3,8 +3,10 @@ import {
   accuracyFromWinPercent,
   ceilCp,
   gameAccuracy,
+  INITIAL_CP,
   meanCentipawnLoss,
   moveAccuracy,
+  phaseAccuracies,
   povChances,
   povDiff,
   winPercentFromCentiPawns,
@@ -235,6 +237,39 @@ describe('LichessAccuracy', () => {
         expect(v).toBeGreaterThanOrEqual(0);
         expect(v).toBeLessThanOrEqual(100);
       }
+    });
+
+    it('retourne 100 % sur une partie parfaitement stable (écart-type nul dans chaque fenêtre → poids 0.5)', () => {
+      const perfect = gameAccuracy(Array.from({ length: 24 }, () => INITIAL_CP), 'white');
+      expect(perfect.white).toBeCloseTo(100, 5);
+      expect(perfect.black).toBeCloseTo(100, 5);
+    });
+
+    it('calcule les précisions par phase (ouverture, milieu, finale) via phaseAccuracies', () => {
+      const fens = [
+        // Ouverture (toutes les pièces)
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+        'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+        // Milieu de jeu (≤ 10 pièces majeures/mineures, mais > 6)
+        'r2q1rk1/ppp2ppp/2n5/8/8/2N5/PPP2PPP/R2Q1RK1 w - - 0 10',
+        'r2q1rk1/ppp2ppp/2n5/8/8/2N5/PPP2PPP/R2Q1RK1 b - - 0 10',
+        'r2q1rk1/ppp2ppp/2n5/8/8/2N5/PPP2PPP/R2Q1RK1 w - - 0 11',
+        'r2q1rk1/ppp2ppp/2n5/8/8/2N5/PPP2PPP/R2Q1RK1 b - - 0 11',
+        // Finale (≤ 6 pièces majeures/mineures)
+        '4k3/ppp2ppp/8/8/8/8/PPP2PPP/4K3 w - - 0 20',
+        '4k3/ppp2ppp/8/8/8/8/PPP2PPP/4K3 b - - 0 20',
+        '4k3/ppp2ppp/8/8/8/8/PPP2PPP/4K3 w - - 0 21',
+        '4k3/ppp2ppp/8/8/8/8/PPP2PPP/4K3 b - - 0 21',
+      ];
+      const cps = fens.map(() => 15);
+      const phases = phaseAccuracies(cps, fens, 'white');
+      expect(phases.division.middle).toBe(4);
+      expect(phases.division.end).toBe(8);
+      expect(phases.opening?.white).toBeCloseTo(100, 1);
+      expect(phases.middlegame?.white).toBeCloseTo(100, 1);
+      expect(phases.endgame?.white).toBeCloseTo(100, 1);
     });
   });
 });

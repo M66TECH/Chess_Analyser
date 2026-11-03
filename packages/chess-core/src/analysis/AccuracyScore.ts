@@ -79,16 +79,21 @@ export class AccuracyScore {
       stats.queensTraded = !boardStr.includes('q') && !boardStr.includes('Q');
 
       // Domination : l'évaluation n'a jamais basculé en faveur de l'adversaire
-      // (marge de 50 cp), sur au moins 10 coups joués.
+      // (marge de 50 cp) ET le camp a effectivement obtenu un avantage net
+      // (≥ 100 cp) sur au moins un coup, sur au moins 10 coups joués.
       let whiteAlwaysAdvantage = true;
       let blackAlwaysAdvantage = true;
+      let whiteReachedAdvantage = false;
+      let blackReachedAdvantage = false;
       for (const r of records) {
         if (r.cpAfter < -50) whiteAlwaysAdvantage = false;
         if (r.cpAfter > 50) blackAlwaysAdvantage = false;
+        if (r.cpAfter >= 100) whiteReachedAdvantage = true;
+        if (r.cpAfter <= -100) blackReachedAdvantage = true;
       }
       stats.perfectDomination = {
-        white: whiteAlwaysAdvantage && wCount > 10,
-        black: blackAlwaysAdvantage && bCount > 10,
+        white: whiteAlwaysAdvantage && whiteReachedAdvantage && wCount > 10,
+        black: blackAlwaysAdvantage && blackReachedAdvantage && bCount > 10,
       };
     }
 
