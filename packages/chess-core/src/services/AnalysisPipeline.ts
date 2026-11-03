@@ -10,6 +10,8 @@ import { OpeningBook } from '../explorer/OpeningBook';
 import type { OpeningData } from '../explorer/ExplorerCache';
 import { MoveRecord, MoveNode, MoveTheory } from '../pedagogy/types';
 import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
+import { parseFen } from 'chessops/fen';
+import { Chess } from 'chessops/chess';
 
 interface PendingMove {
   uci: string;
@@ -24,6 +26,8 @@ interface PendingMove {
 export class AnalysisPipeline {
   private evalCache = new EvalCache();
   private moveRecords: MoveRecord[] = [];
+  private recordsByNodeId = new Map<string, MoveRecord>();
+  private multiPvsByFen = new Map<string, Map<number, EngineEvaluation>>();
 
   // State for the currently analyzing move
   private pendingMove: PendingMove | null = null;
@@ -42,6 +46,45 @@ export class AnalysisPipeline {
     private engineManager: EngineManager
   ) {
     this.setupListeners();
+  }
+
+  /**
+   * Détecte si `fen` est une position terminale (échec et mat, pat, matériel
+   * insuffisant, règle des 50 coups ou triple répétition) afin de fournir une
+   * évaluation exacte immédiate sans dépendre de `score mate 0` / `bestmove (none)`.
+   */
+  private getTerminalEvaluation(fen: string): EngineEvaluation | null {
+    try {
+      const setup = parseFen(fen).unwrap();
+      const pos = Chess.fromSetup(setup).unwrap();
+      if (pos.isCheckmate()) {
+        return {
+          fen,
+          depth: this.targetDepth,
+          cp: -1000,
+          mate: 0,
+          pv: [],
+          multiPv: 1,
+        };
+      }
+      if (
+        pos.isStalemate() ||
+        pos.isInsufficientMaterial() ||
+        setup.halfmoves >= 100 ||
+        (fen === this.moveManager.getFen() && this.moveManager.isThreefoldRepetition())
+      ) {
+        return {
+          fen,
+          depth: this.targetDepth,
+          cp: 0,
+          pv: [],
+          multiPv: 1,
+        };
+      }
+    } catch {
+      // Position non standard ou FEN partiel : laisser le moteur gérer.
+    }
+    return null;
   }
 
   private setupListeners() {
@@ -96,6 +139,16 @@ export class AnalysisPipeline {
 
       // Launch the engine right away; the theory answer joins when it arrives.
       void theoryPromise;
+
+      const terminalEval = this.getTerminalEvaluation(fenAfter);
+      if (terminalEval) {
+        this.latestEval = terminalEval;
+        this.pedagogyDone = true;
+        this.evalCache.set(fenAfter, terminalEval);
+        this.maybeRunPedagogy();
+        return;
+      }
+
       this.engineManager.analyze(fenAfter, this.targetDepth);
     });
 
@@ -107,10 +160,20 @@ export class AnalysisPipeline {
       this.pendingTheory = undefined;
       this.theoryResolved = true;
       this.pedagogyDone = false;
+      this.syncMoveRecordsWithTree();
     });
 
     this.eventBus.on('EngineEvaluationUpdated', (evaluation) => {
-      // Only the primary PV line is used for caching and pedagogy
+      if (evaluation.fen) {
+        let pvMap = this.multiPvsByFen.get(evaluation.fen);
+        if (!pvMap) {
+          pvMap = new Map();
+          this.multiPvsByFen.set(evaluation.fen, pvMap);
+        }
+        pvMap.set(evaluation.multiPv ?? 1, evaluation);
+      }
+
+      // Only the primary PV line is used for caching and pedagogy triggers
       if (evaluation.multiPv && evaluation.multiPv !== 1) return;
 
       // A previously scheduled (stale) warm-up must never be written while a
@@ -197,7 +260,19 @@ export class AnalysisPipeline {
     };
   }
 
-  private runPedagogy(evalAfter: EngineEvaluation) {
+  private syncMoveRecordsWithTree() {
+    const history = this.moveManager.getHistory();
+    if (history.length > 0) {
+      const synced: MoveRecord[] = [];
+      for (const node of history) {
+        const rec = this.recordsByNodeId.get(node.id);
+        if (rec) synced.push(rec);
+      }
+      this.moveRecords = synced;
+    }
+  }
+
+  private runPedagogy(evalAfter: EngineEvaluation, isBulkImport = false) {
     if (!this.pendingMove) return;
 
     const { uci, san, fenBefore, fenAfter, color, nodeId, moveNumber } = this.pendingMove;
@@ -206,21 +281,42 @@ export class AnalysisPipeline {
     // fall back to a neutral record instead of inventing an accuracy (E1).
     const evalBefore = this.evalBeforeMove;
     const sideToMoveAfter: 'white' | 'black' = color === 'white' ? 'black' : 'white';
+    const isCheckmateMove = evalAfter.mate === 0 && evalAfter.cp === -1000;
 
     // 1. Normalize scores (White's POV), accounting for the side to move (mate sign)
     const normCpBefore = evalBefore
       ? EvalNormalizer.normalize(evalBefore.cp, evalBefore.mate, color)
+      : isCheckmateMove
+        ? color === 'white' ? 1000 : -1000
+        : EvalNormalizer.normalize(evalAfter.cp, evalAfter.mate, sideToMoveAfter);
+    const normCpAfter = isCheckmateMove
+      ? color === 'white' ? 1000 : -1000
       : EvalNormalizer.normalize(evalAfter.cp, evalAfter.mate, sideToMoveAfter);
-    const normCpAfter = EvalNormalizer.normalize(evalAfter.cp, evalAfter.mate, sideToMoveAfter);
 
     // 2. Winning chances dropped by the player (positive = lost chances)
     const winDrop = evalBefore
       ? EvalNormalizer.winningChancesDiff(normCpBefore, normCpAfter, color)
       : 0;
 
-    // Best move from BEFORE the move
-    const bestMove = evalBefore && evalBefore.pv.length > 0 ? evalBefore.pv[0] : undefined;
-    const isBestMove = !!bestMove && bestMove === uci;
+    // Best move from BEFORE the move (un coup qui réalise l'échec et mat `#`
+    // est par définition optimal, même si plusieurs mats en 1 existaient).
+    const bestMove = isCheckmateMove
+      ? uci
+      : evalBefore && evalBefore.pv.length > 0
+        ? evalBefore.pv[0]
+        : undefined;
+    const isBestMove = isCheckmateMove || (!!bestMove && bestMove === uci);
+
+    // Calcul de l'écart entre PV1 et PV2 sur fenBefore (si disponible)
+    let multiPvGap: number | undefined;
+    const beforePvs = this.multiPvsByFen.get(fenBefore);
+    if (beforePvs && beforePvs.has(1) && beforePvs.has(2)) {
+      const pv1 = beforePvs.get(1)!;
+      const pv2 = beforePvs.get(2)!;
+      const cp1 = EvalNormalizer.normalize(pv1.cp, pv1.mate, color);
+      const cp2 = EvalNormalizer.normalize(pv2.cp, pv2.mate, color);
+      multiPvGap = Math.max(0, EvalNormalizer.winningChancesDiff(cp1, cp2, color));
+    }
 
     // Human theory: the Lichess database may consider this move normal even
     // though Stockfish's preferred line differs.
@@ -236,7 +332,7 @@ export class AnalysisPipeline {
       : undefined;
     const nextScore = {
       cp: evalAfter.cp === undefined ? undefined : -evalAfter.cp,
-      mate: evalAfter.mate === undefined ? undefined : -evalAfter.mate,
+      mate: evalAfter.mate === undefined ? undefined : evalAfter.mate === 0 ? 1 : -evalAfter.mate,
     };
 
     // 3. Classification (jugement Lichess d'abord, barème interne ensuite)
@@ -272,6 +368,9 @@ export class AnalysisPipeline {
       fenAfter,
       playedMove: uci,
       bestMove,
+      bestPv: evalBefore?.pv && evalBefore.pv.length > 0 ? evalBefore.pv : undefined,
+      refutationPv: evalAfter.pv && evalAfter.pv.length > 0 ? evalAfter.pv : undefined,
+      multiPvGap,
       cpBefore: normCpBefore,
       mateBefore: evalBefore?.mate,
       cpAfter: normCpAfter,
@@ -290,26 +389,46 @@ export class AnalysisPipeline {
       nodeId,
     };
 
-    this.moveRecords.push(analysis);
+    // Génère immédiatement la fiche locale déterministe (garantit une
+    // explication vérifiée même hors-ligne ou pendant un import PGN massif).
+    const previous = this.moveRecords.at(-1);
+    analysis.coachCard = ExplanationEngine.buildLocalCard(
+      analysis,
+      'intermediaire',
+      previous?.classification ?? null
+    );
+
+    this.recordsByNodeId.set(nodeId, analysis);
+    const history = this.moveManager.getHistory();
+    if (history.some(n => n.id === nodeId)) {
+      this.syncMoveRecordsWithTree();
+    } else {
+      const existingIdx = this.moveRecords.findIndex(r => r.nodeId === nodeId);
+      if (existingIdx >= 0) {
+        this.moveRecords[existingIdx] = analysis;
+      } else {
+        this.moveRecords.push(analysis);
+      }
+    }
+
     this.eventBus.emit('PedagogyUpdated', analysis);
     this.eventBus.emit('MoveRecorded', analysis);
     this.eventBus.emit('AccuracyUpdated', AccuracyScore.computeGameStats(this.moveRecords));
 
-    // L'IA ne remplace pas l'analyse Lichess : elle la traduit en fiche
-    // pédagogique (coup joué, coup manqué, erreur, bonne décision, conséquence).
-    const previous = this.moveRecords.at(-2);
-    ExplanationEngine.generateCard(analysis, 'intermediaire', previous?.classification ?? null)
-      .then(card => {
-        analysis.coachCard = card;
-        // The user may have navigated away in the meantime: only refresh the
-        // bubble if this record is still the one being displayed.
-        if (this.pendingMove?.nodeId === nodeId || this.moveRecords.at(-1)?.nodeId === nodeId) {
-          this.eventBus.emit('PedagogyUpdated', analysis);
-        }
-      })
-      .catch(error => {
-        console.error('[AnalysisPipeline] Coach card failed:', error);
-      });
+    // Lors d'un import PGN massif (`isBulkImport`), on ne sature pas `/api/coach`
+    // avec 80 requêtes LLM parallèles : la fiche locale enrichie suffit.
+    if (!isBulkImport) {
+      ExplanationEngine.generateCard(analysis, 'intermediaire', previous?.classification ?? null)
+        .then(card => {
+          analysis.coachCard = card;
+          if (this.pendingMove?.nodeId === nodeId || this.moveRecords.at(-1)?.nodeId === nodeId) {
+            this.eventBus.emit('PedagogyUpdated', analysis);
+          }
+        })
+        .catch(error => {
+          console.error('[AnalysisPipeline] Coach card failed:', error);
+        });
+    }
   }
 
   /**
@@ -358,7 +477,7 @@ export class AnalysisPipeline {
       this.theoryResolved = true;
       // Prevent the event-driven handler from re-running this position
       this.pedagogyDone = true;
-      this.runPedagogy(evalAfter);
+      this.runPedagogy(evalAfter, true);
     }
 
     this.pendingMove = null;
@@ -373,6 +492,11 @@ export class AnalysisPipeline {
    * Waits for the primary-PV evaluation of `fen` to reach `depth`.
    */
   private awaitEval(fen: string, depth: number = this.targetDepth, timeoutMs: number = 30000): Promise<EngineEvaluation | null> {
+    const terminalEval = this.getTerminalEvaluation(fen);
+    if (terminalEval) {
+      return Promise.resolve(terminalEval);
+    }
+
     return new Promise((resolve) => {
       let resolved = false;
       // Keep the deepest evaluation seen, so a search that ends before `depth`
@@ -393,7 +517,12 @@ export class AnalysisPipeline {
         if (!best || evaluation.depth > best.depth) best = evaluation;
         if (evaluation.depth >= depth) finish(evaluation);
       };
-      const onFinished = () => finish(best);
+      // Un `bestmove` résiduel de la position précédente peut arriver avant la
+      // première ligne `info` de la nouvelle position (`best === null`). On ne
+      // conclut sur `AnalysisFinished` que si une évaluation de `fen` a été reçue.
+      const onFinished = () => {
+        if (best) finish(best);
+      };
       const timer = setTimeout(() => finish(best), timeoutMs);
       this.eventBus.on('EngineEvaluationUpdated', handler);
       this.eventBus.on('AnalysisFinished', onFinished);
@@ -410,6 +539,18 @@ export class AnalysisPipeline {
 
   public getMoveRecords(): MoveRecord[] {
     return [...this.moveRecords];
+  }
+
+  /** Restaure des `MoveRecord` persistés (ex. `localStorage`) dans l'arbre courant. */
+  public restoreMoveRecords(records: MoveRecord[]) {
+    this.recordsByNodeId.clear();
+    for (const r of records) {
+      this.recordsByNodeId.set(r.nodeId, r);
+    }
+    this.syncMoveRecordsWithTree();
+    if (this.moveRecords.length === 0 && records.length > 0) {
+      this.moveRecords = [...records];
+    }
   }
 
   /**
@@ -430,6 +571,8 @@ export class AnalysisPipeline {
 
   public reset() {
     this.moveRecords = [];
+    this.recordsByNodeId.clear();
+    this.multiPvsByFen.clear();
     this.resetPending();
   }
 }

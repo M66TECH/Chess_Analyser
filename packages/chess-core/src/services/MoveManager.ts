@@ -59,6 +59,51 @@ export class MoveManager {
     return Math.ceil(path.length / 2);
   }
 
+  /** Retourne la liste ordonnée des nœuds de la branche active (racine → position courante). */
+  public getHistory(): MoveNode[] {
+    return this.getCurrentPath();
+  }
+
+  /**
+   * Détecte si la position courante (placement + trait + droits de roque + ep)
+   * est apparue au moins 3 fois dans la branche courante (nulle par répétition).
+   */
+  public isThreefoldRepetition(): boolean {
+    const keyOf = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
+    const path = this.getCurrentPath();
+    const targetKey = keyOf(this.getFen());
+    let count = keyOf(this.initialFen) === targetKey ? 1 : 0;
+    for (const node of path) {
+      if (keyOf(node.fenAfter) === targetKey) {
+        count++;
+      }
+    }
+    return count >= 3;
+  }
+
+  /**
+   * Remonte jusqu'au dernier coup irréversible (coup de pion, prise ou roque,
+   * où l'horloge des demi-coups `halfmoves` retombe à 0) pour permettre à
+   * Stockfish de détecter les nulles par répétition (`ceval/ctrl.ts` de Lila).
+   */
+  public getIrreversibleHistory(): { rootFen: string; moves: string[] } {
+    const path = this.getCurrentPath();
+    if (path.length === 0) {
+      return { rootFen: this.initialFen, moves: [] };
+    }
+    let startIdx = 0;
+    for (let i = path.length - 1; i >= 0; i--) {
+      const halfmoves = parseInt(path[i].fenAfter.split(' ')[4] ?? '0', 10);
+      if (halfmoves === 0) {
+        startIdx = i;
+        break;
+      }
+    }
+    const rootFen = startIdx === 0 ? this.initialFen : path[startIdx].fenAfter;
+    const moves = startIdx === 0 ? path.map(n => n.uci) : path.slice(startIdx + 1).map(n => n.uci);
+    return { rootFen, moves };
+  }
+
   private getCurrentPath(): MoveNode[] {
     const path: MoveNode[] = [];
     let current = this.currentNodeId ? this.nodes.get(this.currentNodeId) : null;

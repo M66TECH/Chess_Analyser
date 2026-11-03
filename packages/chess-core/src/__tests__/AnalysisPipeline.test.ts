@@ -216,4 +216,60 @@ describe('AnalysisPipeline', () => {
     expect(records[0].nodeId).toBe(first.nodeId);
     expect(records.some(r => r.nodeId === second.nodeId)).toBe(false);
   });
+
+  it('enregistre immédiatement le coup de mat final (#) comme "best" sans attendre mate 0 de Stockfish', async () => {
+    const eventBus = new GameEventBus();
+    // Position juste avant 4. Qxf7# (Mat du Berger)
+    const preMateFen = 'r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4';
+    const moveManager = new MoveManager(preMateFen);
+    const engine = new FakeEngine();
+    const pipeline = new AnalysisPipeline(eventBus, moveManager, engine as unknown as EngineManager);
+
+    const mateMove = moveManager.playMove('h5f7');
+    expect(mateMove.success).toBe(true);
+    expect(mateMove.san).toBe('Qxf7#');
+
+    eventBus.emit('MovePlayed', {
+      fenBefore: preMateFen,
+      fenAfter: moveManager.getFen(),
+      move: 'h5f7',
+      nodeId: mateMove.nodeId!,
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    const records = pipeline.getMoveRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0].san).toBe('Qxf7#');
+    expect(records[0].classification).toBe('best');
+    expect(records[0].accuracy).toBe(100);
+    expect(records[0].cpAfter).toBe(1000);
+  });
+
+  it('évalue immédiatement un coup qui provoque le pat (stalemate) à 0 cp et le sanctionne comme gaffe', async () => {
+    const eventBus = new GameEventBus();
+    // Blancs largement gagnants (Dame + Roi contre Roi en h8), mais Qg6 fait pat !
+    const preStalemateFen = '7k/8/5K2/8/8/8/8/6Q1 w - - 0 1';
+    const moveManager = new MoveManager(preStalemateFen);
+    const engine = new FakeEngine();
+    const pipeline = new AnalysisPipeline(eventBus, moveManager, engine as unknown as EngineManager);
+
+    pipeline.initialize(preStalemateFen);
+    eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: preStalemateFen, cp: 900, pv: ['g1g7'] }));
+
+    const staleMove = moveManager.playMove('g1g6');
+    expect(staleMove.success).toBe(true);
+
+    eventBus.emit('MovePlayed', {
+      fenBefore: preStalemateFen,
+      fenAfter: moveManager.getFen(),
+      move: 'g1g6',
+      nodeId: staleMove.nodeId!,
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    const records = pipeline.getMoveRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0].cpAfter).toBe(0);
+    expect(records[0].classification).toBe('blunder');
+  });
 });

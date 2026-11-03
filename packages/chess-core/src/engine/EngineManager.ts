@@ -208,9 +208,16 @@ export class EngineManager {
 
   /**
    * Analyse `fen` à `depth`.
-   * Si le moteur n'est pas prêt, la demande est mise en file (la dernière gagne).
+   * Si `history` est fourni (FEN du dernier coup irréversible + liste UCI),
+   * Stockfish reçoit `position fen <rootFen> moves ...` pour détecter les
+   * répétitions de position (`ceval/ctrl.ts` de Lichess), tout en étiquetant
+   * les évaluations avec `fen`.
    */
-  public analyze(fen: string, depth = 14) {
+  public analyze(
+    fen: string,
+    depth = 14,
+    history?: { rootFen: string; moves: string[] }
+  ) {
     this.isThreatMode = false;
     this.pendingThreat = false;
 
@@ -225,7 +232,11 @@ export class EngineManager {
 
     this.currentAnalysisFen = fen;
     this.send('stop');
-    this.send(`position fen ${fen}`);
+    if (history && history.moves.length > 0) {
+      this.send(`position fen ${history.rootFen} moves ${history.moves.join(' ')}`);
+    } else {
+      this.send(`position fen ${fen}`);
+    }
     this.send(`go depth ${depth}`);
     this.eventBus.emit('AnalysisStarted', undefined as never);
   }
