@@ -23,3 +23,10 @@ venv.bak/
 # Fichiers locaux avec secrets / notes personnelles
 cle API.txt
 audit .txt
+.env*
+!.env.example
+!.env.template
+
+# Secrets locaux (ne jamais committer)
+*.pem
+*.key
