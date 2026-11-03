@@ -63,7 +63,15 @@ export default function Home() {
       return;
     }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ moves: uciMoves, ts: Date.now() }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          moves: uciMoves,
+          records: gm.getMoveRecords(),
+          initialFen: gm.moveManager.getInitialFen(),
+          ts: Date.now(),
+        })
+      );
     } catch {}
   }, []);
 
@@ -71,13 +79,17 @@ export default function Home() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
-      const { moves } = JSON.parse(raw) as { moves: string[]; ts: number };
+      const { moves, records: savedRecords, initialFen } = JSON.parse(raw) as {
+        moves: string[];
+        records?: MoveRecord[];
+        initialFen?: string;
+        ts: number;
+      };
       if (!Array.isArray(moves) || moves.length === 0) return false;
       const gm = gmRef.current;
       if (!gm) return false;
-      for (const uci of moves) {
-        gm.playMove(uci);
-      }
+      if (!gm.restoreSession(moves, savedRecords, initialFen)) return false;
+      setRecords(gm.getMoveRecords());
       setActiveNodeId(gm.getActiveNodeId());
       return true;
     } catch {

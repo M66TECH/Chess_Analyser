@@ -3,7 +3,7 @@ import { MoveManager } from '../services/MoveManager';
 import { EngineManager } from '../engine/EngineManager';
 import { AnalysisPipeline } from '../services/AnalysisPipeline';
 import { PgnParser } from '../parser/PgnParser';
-import { MoveNode } from '../pedagogy/types';
+import { MoveNode, MoveRecord } from '../pedagogy/types';
 
 export class GameManager {
   public eventBus: GameEventBus;
@@ -136,15 +136,15 @@ export class GameManager {
       return { success: false, error: result.error };
     }
 
-    // Reset silencieux sans analyse intermédiaire
+    // Reset silencieux avec le FEN personnalisé du PGN s'il est présent
+    const setupFen = result.headers['FEN'];
     this.pipeline.reset();
-    this.moveManager.reset();
+    this.moveManager.reset(setupFen);
     this.engineManager.reinit();
     this.activeNodeId = null;
     this.isNavigating = false;
 
-    // Rejouer tous les coups silencieusement. Le FEN de départ du PGN n'est pas
-    // transmis par PgnParser : on repart de la position standard.
+    // Rejouer tous les coups silencieusement à partir de la position initiale du PGN.
     const nodes: MoveNode[] = [];
     for (const uci of result.moves) {
       const playResult = this.moveManager.playMove(uci);
@@ -166,6 +166,43 @@ export class GameManager {
     await this.pipeline.analyzeGame(nodes);
 
     return { success: true, moveCount: nodes.length };
+  }
+
+  /**
+   * Restaure une partie sauvegardée (coups UCI + `MoveRecord` déjà calculés)
+   * sans déclencher d'analyses concurrentes avortées sur chaque coup.
+   */
+  public restoreSession(moves: string[], savedRecords?: MoveRecord[], initialFen?: string): boolean {
+    if (!Array.isArray(moves) || moves.length === 0) return false;
+    this.pipeline.reset();
+    this.moveManager.reset(initialFen);
+    this.activeNodeId = null;
+    this.isNavigating = false;
+
+    const nodes: MoveNode[] = [];
+    for (const uci of moves) {
+      const res = this.moveManager.playMove(uci);
+      if (!res.success) break;
+      const node = res.nodeId ? this.moveManager.getTree().nodes.get(res.nodeId) : null;
+      if (node) nodes.push(node);
+      this.activeNodeId = res.nodeId ?? this.activeNodeId;
+    }
+
+    if (nodes.length === 0) return false;
+
+    if (savedRecords && savedRecords.length > 0) {
+      // Réassocier par index sur la branche principale si les nodeId ont changé
+      const remapped = savedRecords.map((rec, idx) =>
+        nodes[idx] ? { ...rec, nodeId: nodes[idx].id } : rec
+      );
+      this.pipeline.restoreMoveRecords(remapped);
+    }
+
+    const finalFen = this.moveManager.getFen();
+    this.eventBus.emit('PositionChanged', { fen: finalFen });
+    this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.activeNodeId });
+    this.engineManager.analyze(finalFen, 14);
+    return true;
   }
 
   public terminate() {

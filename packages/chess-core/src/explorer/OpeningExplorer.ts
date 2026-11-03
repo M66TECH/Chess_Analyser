@@ -24,6 +24,7 @@ export class OpeningExplorer {
   private static cache = new ExplorerCache();
   private static abortController: AbortController | null = null;
   private static requestTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static pendingResolve: ((res: OpeningFetchResult) => void) | null = null;
 
   /**
    * Fetches opening data for a given FEN from the Lichess masters database.
@@ -49,10 +50,29 @@ export class OpeningExplorer {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
+    // Si un appel précédent attendait encore son timer de debounce, on résout
+    // sa promesse proprement pour ne jamais bloquer l'AnalysisPipeline.
+    if (this.requestTimeout) {
+      clearTimeout(this.requestTimeout);
+      this.requestTimeout = null;
+    }
+    if (this.pendingResolve) {
+      const prevResolve = this.pendingResolve;
+      this.pendingResolve = null;
+      prevResolve({ data: null, opening: null });
+    }
+
     return new Promise((resolve) => {
-      if (this.requestTimeout) clearTimeout(this.requestTimeout);
+      this.pendingResolve = resolve;
+      const finish = (res: OpeningFetchResult) => {
+        if (this.pendingResolve === resolve) {
+          this.pendingResolve = null;
+        }
+        resolve(res);
+      };
 
       this.requestTimeout = setTimeout(async () => {
+        this.requestTimeout = null;
         try {
           const url = `/api/explorer?fen=${encodeURIComponent(fen)}&moves=12`;
           const response = await fetch(url, { signal });
@@ -64,30 +84,30 @@ export class OpeningExplorer {
                 fetch(url, { signal })
                   .then(async r => {
                     if (!r.ok) {
-                      resolve({ data: null, opening: null });
+                      finish({ data: null, opening: null });
                       return;
                     }
-                    resolve(this.store(fen, (await r.json()) as RawOpeningData));
+                    finish(this.store(fen, (await r.json()) as RawOpeningData));
                   })
                   .catch(err => {
                     if (err instanceof Error && err.name !== 'AbortError') {
                       console.error('Lichess Explorer retry error:', err);
                     }
-                    resolve({ data: null, opening: null });
+                    finish({ data: null, opening: null });
                   });
               }, 1000);
               return;
             }
-            resolve({ data: null, opening: null });
+            finish({ data: null, opening: null });
             return;
           }
 
-          resolve(this.store(fen, (await response.json()) as RawOpeningData));
+          finish(this.store(fen, (await response.json()) as RawOpeningData));
         } catch (error: unknown) {
           if (error instanceof Error && error.name !== 'AbortError') {
             console.error('Lichess Explorer error:', error);
           }
-          resolve({ data: null, opening: null });
+          finish({ data: null, opening: null });
         }
       }, 250);
     });

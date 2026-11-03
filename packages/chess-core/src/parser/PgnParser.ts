@@ -127,7 +127,12 @@ export class PgnParser {
       const comments: string[] = [];
       if (r.cpAfter !== undefined) {
         if (r.mateAfter !== undefined) {
-          comments.push(`[%eval #${r.mateAfter}]`);
+          // `mateAfter` est stocké du point de vue du camp au trait après le
+          // coup (l'adversaire) : on le ramène au point de vue des Blancs pour
+          // la convention standard `[%eval #N]` de Lichess.
+          const whitePovMate =
+            r.mateAfter === 0 ? 0 : r.color === 'white' ? -r.mateAfter : r.mateAfter;
+          comments.push(`[%eval #${whitePovMate}]`);
         } else {
           comments.push(`[%eval ${(r.cpAfter / 100).toFixed(2)}]`);
         }
@@ -135,7 +140,7 @@ export class PgnParser {
 
       if (r.classification === 'blunder' || r.classification === 'mistake' || r.classification === 'inaccuracy') {
         const textClass = r.classification === 'blunder' ? 'Blunder' : r.classification === 'mistake' ? 'Mistake' : 'Inaccuracy';
-        const best = r.bestMove ? `${r.bestMove} was best.` : '';
+        const best = r.bestMove && r.bestMove !== r.playedMove ? `${r.bestMove} was best.` : '';
         comments.push(`${textClass}. ${best}`.trim());
       }
 

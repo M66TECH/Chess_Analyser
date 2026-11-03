@@ -103,4 +103,21 @@ describe('GameManager', () => {
     expect(result.moveCount).toBe(3);
     expect(gm.getTree().nodes.get(gm.getActiveNodeId()!)!.san).toBe('Nf3');
   });
+
+  it('charge un PGN avec en-tête [FEN] personnalisé et rejoue les coups depuis ce FEN', async () => {
+    const { gm } = createManager();
+    const pipeline = gm.pipeline as unknown as { analyzeGame: () => Promise<void> };
+    pipeline.analyzeGame = vi.fn(async () => {});
+
+    const customPgn = `[Event "Custom FEN"]
+[SetUp "1"]
+[FEN "4k3/8/8/8/8/8/8/4K2R w K - 0 1"]
+
+1. Rh8+ Kf7 *`;
+
+    const result = await gm.loadPgn(customPgn);
+    expect(result.success).toBe(true);
+    expect(result.moveCount).toBe(2);
+    expect(gm.getTree().nodes.get(gm.getActiveNodeId()!)!.san).toBe('Kf7');
+  });
 });
