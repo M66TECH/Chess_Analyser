@@ -1,3 +1,5 @@
+export type EngineEvaluationSource = 'cloud' | 'local';
+
 export type EngineEvaluation = {
   depth: number;
   cp?: number;
@@ -5,6 +7,15 @@ export type EngineEvaluation = {
   pv: string[];
   multiPv?: number;
   fen?: string;
+  /**
+   * `cloud` = hit de la base cloud de Lichess (scores POV Blanc convertis en
+   * POV trait à l'ingestion) ; `local` = Stockfish du navigateur. Sert à
+   * l'affichage (badge nuage) et à exclure le cloud du jugement pédagogique,
+   * comme lila qui ne juge les parties qu'avec ses analyses serveur.
+   */
+  source?: EngineEvaluationSource;
+  /** Nombre de nœuds quand disponible (cloud: knodes × 1000). */
+  nodes?: number;
 };
 
 export type HeatmapData = {

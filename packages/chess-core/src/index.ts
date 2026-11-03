@@ -5,6 +5,7 @@ export * from './game/GameManager';
 export * from './services/MoveManager';
 export * from './services/AnalysisPipeline';
 export * from './services/ExplorerService';
+export * from './services/CloudEvalService';
 export * from './pedagogy/MoveClassifier';
 export * from './pedagogy/MotifEngine';
 export * from './pedagogy/types';

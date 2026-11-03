@@ -164,6 +164,10 @@ export class AnalysisPipeline {
     });
 
     this.eventBus.on('EngineEvaluationUpdated', (evaluation) => {
+      // Le cloud n'entre jamais dans le jugement : lila ne juge les parties
+      // qu'avec ses analyses serveur/locales (evalCache sert à l'affichage).
+      if (evaluation.source === 'cloud') return;
+
       if (evaluation.fen) {
         let pvMap = this.multiPvsByFen.get(evaluation.fen);
         if (!pvMap) {

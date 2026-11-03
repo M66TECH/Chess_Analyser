@@ -193,6 +193,8 @@ export class EngineManager {
       pv: info.pv,
       multiPv: info.multipv,
       fen: this.currentAnalysisFen ?? undefined,
+      source: 'local',
+      nodes: info.nodes,
     };
     if (typeof info.cp === 'number') evaluation.cp = info.cp;
     if (typeof info.mate === 'number') evaluation.mate = info.mate;

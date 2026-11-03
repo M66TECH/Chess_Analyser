@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble, PgnImportModal, PromotionDialog } from '@chess-analyzer/ui';
-import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape } from '@chess-analyzer/chess-core';
+import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape, CloudEvalService, GameEventBus } from '@chess-analyzer/chess-core';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -18,6 +18,7 @@ export default function Home() {
   const [currentCp, setCurrentCp] = useState<number | undefined>(0);
   const [currentMate, setCurrentMate] = useState<number | undefined>(undefined);
   const [currentDepth, setCurrentDepth] = useState<number>(0);
+  const [evalSource, setEvalSource] = useState<'cloud' | 'local' | undefined>(undefined);
   const [engineStatus, setEngineStatus] = useState<'idle' | 'analyzing' | 'ready' | 'error'>('idle');
   const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
   const [showReport, setShowReport] = useState(false);
@@ -37,6 +38,9 @@ export default function Home() {
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Debounce des appels à la base Lichess (évite les rafales à la restauration). */
   const explorerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Tient l'eventBus pour les callbacks hors effet (fetch cloud). */
+  const eventBusRef = useRef<GameEventBus | null>(null);
 
   /** Requête la base d'ouvertures au plus toutes les 300 ms (la dernière gagne). */
   const fetchExplorerDebounced = useCallback((fen: string) => {
@@ -104,10 +108,33 @@ export default function Home() {
     setLastMove(last ? [last.slice(0, 2), last.slice(2, 4)] : undefined);
   }, []);
 
+  /**
+   * Cloud Eval (trio lila : nuage → explorer → Stockfish local). Le hit est
+   * réinjecté dans le flux d'évaluations : flèches MultiPV et barre
+   * s'affichent instantanément pendant que le local monte en profondeur.
+   * Le pipeline ignore ces évals (jugement réservé au local, comme lila qui
+   * ne juge pas avec evalCache).
+   */
+  const fetchCloudEvalDebounced = useCallback((fen: string) => {
+    if (cloudTimer.current) clearTimeout(cloudTimer.current);
+    cloudTimer.current = setTimeout(() => {
+      CloudEvalService.fetch(fen, 3).then(evals => {
+        if (!evals) return;
+        // La position a pu changer pendant le vol : ne rejouer que du frais.
+        const current = gmRef.current?.moveManager.getFen();
+        for (const ev of evals) {
+          if (current && ev.fen !== current) continue;
+          eventBusRef.current?.emit('EngineEvaluationUpdated', ev);
+        }
+      });
+    }, 250);
+  }, []);
+
   useEffect(() => {
     const gm = new GameManager();
     const eventBus = gm.eventBus;
     gmRef.current = gm;
+    eventBusRef.current = eventBus;
 
     eventBus.on('PedagogyUpdated', () => {
       setRecords(gm.getMoveRecords());
@@ -134,6 +161,9 @@ export default function Home() {
         setCurrentCp(typeof evaluation.cp === 'number' ? normCp : undefined);
         setCurrentMate(typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined);
         setCurrentDepth(evaluation.depth);
+        // Le nuage s'affiche tant que le local n'est pas monté en profondeur
+        // (showingCloud de lila) : la source du DERNIER eval affiché gagne.
+        setEvalSource(evaluation.source ?? 'local');
         setEngineStatus(evaluation.depth >= 14 ? 'ready' : 'analyzing');
       }
 
@@ -215,7 +245,9 @@ export default function Home() {
       multiPvs.current.clear();
       threatPvs.current.clear();
       setFen(fen);
+      setEvalSource(undefined);
       fetchExplorerDebounced(fen);
+      fetchCloudEvalDebounced(fen);
     });
 
     gm.init();
@@ -232,6 +264,8 @@ export default function Home() {
 
     return () => {
       clearTimeout(restoreTimer);
+      if (cloudTimer.current) clearTimeout(cloudTimer.current);
+      eventBusRef.current = null;
       gm.terminate();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -397,9 +431,12 @@ export default function Home() {
   const depthLabel = useMemo(() => {
     if (engineStatus === 'error') return 'Erreur';
     if (engineStatus === 'idle' || currentDepth === 0) return 'Initialisation…';
+    // showingCloud de lila : quand le dernier eval affiché vient du nuage,
+    // on le dit explicitement tant que le local n'a pas rattrapé la profondeur.
+    if (evalSource === 'cloud') return `Nuage · profondeur ${currentDepth}`;
     if (currentDepth >= 14) return `Profondeur ${currentDepth}`;
     return `Profondeur ${currentDepth}/${14}`;
-  }, [engineStatus, currentDepth]);
+  }, [engineStatus, currentDepth, evalSource]);
 
   return (
     <div className="min-h-screen w-full flex flex-col">
@@ -416,8 +453,8 @@ export default function Home() {
         </div>
 
         {/* Engine status indicator */}
-        <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 glass-panel-light rounded-lg px-3 py-1.5">
-          <span className={`w-2 h-2 rounded-full ${engineStatus === 'ready' ? 'bg-green-400' : engineStatus === 'analyzing' ? 'bg-amber-400 animate-pulse' : engineStatus === 'error' ? 'bg-red-400' : 'bg-slate-500'}`} />
+        <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 glass-panel-light rounded-lg px-3 py-1.5" title={evalSource === 'cloud' ? 'Évaluation depuis le nuage de Lichess' : 'Analyse Stockfish locale'}>
+          <span className={`w-2 h-2 rounded-full ${engineStatus === 'error' ? 'bg-red-400' : evalSource === 'cloud' ? 'bg-sky-400' : engineStatus === 'ready' ? 'bg-green-400' : engineStatus === 'analyzing' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
           <span className="font-mono">{depthLabel}</span>
         </div>
 
