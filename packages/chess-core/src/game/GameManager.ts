@@ -26,7 +26,7 @@ export class GameManager {
     this.pipeline.initialize();
   }
 
-  public playMove(uci: string) {
+  public playMove(uci: string): { success: boolean; nodeId?: string } {
     this.isNavigating = false;
     const fenBefore = this.moveManager.getFen();
     const result = this.moveManager.playMove(uci);
@@ -38,7 +38,9 @@ export class GameManager {
         move: uci, 
         nodeId: result.nodeId 
       });
+      return { success: true, nodeId: result.nodeId };
     }
+    return { success: false };
   }
 
   public navigateToNode(nodeId: string | null) {
@@ -58,15 +60,12 @@ export class GameManager {
   }
 
   public navigateLast() {
-    // Va à la fin de la ligne courante
-    let current = this.activeNodeId;
+    // Va à la fin de la ligne courante en partant de la racine, sinon on ne
+    // parcourt que les enfants du nœud courant et on s'arrête immédiatement.
     const tree = this.moveManager.getTree();
-    if (!current) {
-      // Find root mainline node
-      const roots = Array.from(tree.nodes.values()).filter(n => n.parentId === null);
-      if (roots.length > 0) current = roots[0].id;
-    }
-    
+    const roots = Array.from(tree.nodes.values()).filter(n => n.parentId === null);
+    let current = roots.length > 0 ? roots[0].id : null;
+
     while (current) {
       const node = tree.nodes.get(current);
       if (node && node.childrenIds.length > 0) {
@@ -144,7 +143,8 @@ export class GameManager {
     this.activeNodeId = null;
     this.isNavigating = false;
 
-    // Rejouer tous les coups silencieusement
+    // Rejouer tous les coups silencieusement. Le FEN de départ du PGN n'est pas
+    // transmis par PgnParser : on repart de la position standard.
     const nodes: MoveNode[] = [];
     for (const uci of result.moves) {
       const playResult = this.moveManager.playMove(uci);
@@ -160,6 +160,7 @@ export class GameManager {
     // Émettre l'événement de position finale
     const finalFen = this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: finalFen });
+    this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.moveManager.getTree().currentNodeId });
 
     // Analyser chaque position séquentiellement (records/coach/graphe)
     await this.pipeline.analyzeGame(nodes);

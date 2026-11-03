@@ -2,10 +2,11 @@
  * E5 — Implémentation réelle du parsing PGN via chessops/pgn.
  * Retourne les coups UCI pour permettre leur rejeu dans GameManager.loadPgn().
  */
-import { parsePgn, startingPosition, PgnNodeData } from 'chessops/pgn';
+import { parsePgn, PgnNodeData } from 'chessops/pgn';
 import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
 import { makeUci } from 'chessops/util';
+import { parseFen } from 'chessops/fen';
 import type { MoveRecord } from '../pedagogy/types';
 
 export interface PgnParseResult {
@@ -43,12 +44,15 @@ export class PgnParser {
 
       // Construire la position de départ (FEN personnalisé si présent)
       const setupFen = headers['FEN'];
-      let pos: Chess;
-      try {
-        pos = setupFen ? startingPosition(game.headers!).unwrap() as Chess : Chess.default();
-      } catch {
-        pos = Chess.default();
-      }
+      const startPosition = (() => {
+        if (!setupFen) return Chess.default();
+        try {
+          return Chess.fromSetup(parseFen(setupFen).unwrap()).unwrap();
+        } catch {
+          return Chess.default();
+        }
+      })();
+      const pos = startPosition;
 
       // Parcourir la ligne principale du PGN et convertir SAN → UCI
       const uciMoves: string[] = [];
@@ -58,6 +62,9 @@ export class PgnParser {
         const child = node.children[0];
         const data: PgnNodeData = child.data;
         const san = data.san;
+
+        // Les commentaires de variante ("{}" ou "*") ne sont pas des coups
+        if (!san || san === '*' || san.startsWith('{')) break;
 
         try {
           const move = parseSan(pos, san);

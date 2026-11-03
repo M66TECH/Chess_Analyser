@@ -186,17 +186,24 @@ export class MotifEngine {
   public static detectUndefended(board: Board, epSquare?: Square): Undefended[] {
     const undefended: Undefended[] = [];
     const cb = board;
-    for (let i = 0; i < 64; i++) {
-      const p = board.get(i === epSquare ? epTargetPawnSq(epSquare) : i);
-      if (p && p.role !== 'king' && isSquareAttacked(i, opposite(p.color), cb)) {
-        const { balance, firstAttacker } = getSEE(i, i === epSquare, p, cb, new Map(), false);
-        if (balance > 0 && firstAttacker !== undefined) {
-          undefended.push({
-            square: i,
-            materialLoss: balance,
-            principalAttacker: firstAttacker,
-          });
-        }
+    const seen = new Set<Square>();
+    for (let square = 0; square < 64; square++) {
+      // An en passant capture targets the pawn behind `epSquare`, not `epSquare` itself.
+      const targetSquare = square === epSquare ? epTargetPawnSq(epSquare) : square;
+      if (seen.has(targetSquare)) continue;
+      seen.add(targetSquare);
+
+      const piece = board.get(targetSquare);
+      if (!piece || piece.role === 'king') continue;
+      if (!isSquareAttacked(targetSquare, opposite(piece.color), cb)) continue;
+
+      const { balance, firstAttacker } = getSEE(targetSquare, false, piece, cb, new Map(), false);
+      if (balance > 0 && firstAttacker !== undefined) {
+        undefended.push({
+          square: targetSquare,
+          materialLoss: balance,
+          principalAttacker: firstAttacker,
+        });
       }
     }
     return undefended;

@@ -1,8 +1,11 @@
 import { Chess } from 'chessops/chess';
 import { makeFen, parseFen } from 'chessops/fen';
-import { parseUci, makeUci } from 'chessops/util';
+import { parseSquare, parseUci, makeUci } from 'chessops/util';
 import { makeSan } from 'chessops/san';
 import { MoveNode } from '../pedagogy/types';
+
+/** Pièces proposées lors d'une promotion, dans l'ordre de l'UI. */
+const PROMOTION_ROLES = ['q', 'r', 'b', 'n'] as const;
 
 export class MoveManager {
   private initialFen: string;
@@ -73,6 +76,9 @@ export class MoveManager {
     const fenBefore = this.getFen();
 
     if (!this.pos.isLegal(move)) {
+      // Promotion notée sans pièce (`e7e8`) : on choisit la dame, convention
+      // des PGN abrégés. L'UI, elle, passe toujours par `isPromotion()` pour
+      // laisser le joueur choisir avant d'envoyer le coup.
       const promotionMove = parseUci(uci + 'q');
       if (promotionMove && this.pos.isLegal(promotionMove)) {
         move = promotionMove;
@@ -156,6 +162,31 @@ export class MoveManager {
 
   public getPosition(): Chess {
     return this.pos.clone();
+  }
+
+  /**
+   * Vrai si `from`→`to` nécessite un choix de pièce de promotion.
+   *
+   * Sert à l'UI : elle doit ouvrir le sélecteur avant de jouer le coup, car
+   * `playMove` exige la pièce dans l'UCI (`e7e8q`). Se base sur les coups
+   * réellement légaux plutôt que sur une heuristique de rangée.
+   */
+  public isPromotion(from: string, to: string): boolean {
+    const fromSquare = parseSquare(from);
+    const toSquare = parseSquare(to);
+    if (fromSquare === undefined || toSquare === undefined) return false;
+
+    const piece = this.pos.board.get(fromSquare);
+    if (!piece || piece.role !== 'pawn') return false;
+
+    const base = parseUci(`${from}${to}`);
+    if (base && this.pos.isLegal(base)) return false; // pas une promotion
+
+    // Promotion si au moins une pièce rend le coup légal.
+    return PROMOTION_ROLES.some(role => {
+      const move = parseUci(`${from}${to}${role}`);
+      return move ? this.pos.isLegal(move) : false;
+    });
   }
 
   // FEN history of current path
