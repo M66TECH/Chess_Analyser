@@ -3,7 +3,15 @@ import { EngineEvaluation } from '../events/GameEventBus';
 export class EvalCache {
   private readonly dbName = 'ChessAnalyzerEvalDB';
   private readonly storeName = 'evals';
-  private dbPromise: Promise<IDBDatabase> | null = null;
+  private dbPromise: Promise<IDBDatabase | null> | null = null;
+  /**
+   * Fallback used when IndexedDB is unavailable (server rendering, tests, private
+   * browsing): without it every `get()` misses and the pipeline loses the
+   * pre-move evaluation, which breaks bestMove/classification.
+   */
+  private readonly memory: Map<string, EngineEvaluation> = new Map();
+  /** Minimum depth for an evaluation to be considered reliable enough to cache. */
+  private readonly minDepth = 14;
 
   constructor() {
     if (typeof window !== 'undefined' && window.indexedDB) {
@@ -11,10 +19,10 @@ export class EvalCache {
     }
   }
 
-  private initDB(): Promise<IDBDatabase> {
+  private initDB(): Promise<IDBDatabase | null> {
     if (this.dbPromise) return this.dbPromise;
 
-    this.dbPromise = new Promise((resolve, reject) => {
+    this.dbPromise = new Promise((resolve) => {
       const request = indexedDB.open(this.dbName, 1);
 
       request.onupgradeneeded = (event) => {
@@ -30,7 +38,10 @@ export class EvalCache {
 
       request.onerror = (event) => {
         console.error('IndexedDB error:', event);
-        reject('Error opening IndexedDB');
+        // Never reject: callers await this promise and a rejection would surface
+        // as an unhandled error. The in-memory cache keeps the app working.
+        this.dbPromise = null;
+        resolve(null);
       };
     });
 
@@ -49,11 +60,15 @@ export class EvalCache {
   }
 
   public async get(fen: string): Promise<EngineEvaluation | undefined> {
+    const key = this.normalizeFen(fen);
+    const fromMemory = this.memory.get(key);
+    if (fromMemory) return fromMemory;
+
     if (!this.dbPromise) return undefined;
 
     try {
       const db = await this.dbPromise;
-      const key = this.normalizeFen(fen);
+      if (!db) return undefined;
 
       return new Promise((resolve) => {
         const transaction = db.transaction([this.storeName], 'readonly');
@@ -74,22 +89,29 @@ export class EvalCache {
   }
 
   public async set(fen: string, evaluation: EngineEvaluation): Promise<void> {
-    if (!this.dbPromise) return;
-    
     // Quality check (Lichess style): minimum depth
-    if (evaluation.depth < 14) return;
+    if (evaluation.depth < this.minDepth) return;
+
+    const key = this.normalizeFen(fen);
+    this.memory.set(key, evaluation);
+    if (this.memory.size > 4096) {
+      const oldest = this.memory.keys().next().value;
+      if (oldest !== undefined) this.memory.delete(oldest);
+    }
+
+    if (!this.dbPromise) return;
 
     try {
       const db = await this.dbPromise;
-      const key = this.normalizeFen(fen);
+      if (!db) return;
 
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const transaction = db.transaction([this.storeName], 'readwrite');
         const store = transaction.objectStore(this.storeName);
         const request = store.put(evaluation, key);
 
         request.onsuccess = () => resolve();
-        request.onerror = () => reject();
+        request.onerror = () => resolve();
       });
     } catch (e) {
       console.error('Failed to save eval to IndexedDB:', e);

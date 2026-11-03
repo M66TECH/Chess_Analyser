@@ -9,7 +9,7 @@ export interface OpeningMoveStats extends MoveStats {
   draws: number;
 }
 
-export interface OpeningData {
+export interface OpeningExplorerResult {
   isOpening: true;
   white: number;
   black: number;
@@ -29,7 +29,7 @@ export interface TablebaseData {
   moves: TablebaseMoveStats[];
 }
 
-export type ExplorerResult = OpeningData | TablebaseData | null;
+export type ExplorerResult = OpeningExplorerResult | TablebaseData | null;
 
 export class ExplorerService {
   /**
@@ -70,7 +70,7 @@ export class ExplorerService {
         return {
           isOpening: true,
           ...data
-        } as OpeningData;
+        } as OpeningExplorerResult;
       }
     } catch (e) {
       console.error('[ExplorerService] Failed to fetch:', e);

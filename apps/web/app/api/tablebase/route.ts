@@ -9,14 +9,19 @@ export async function GET(request: Request) {
   }
 
   const lichessUrl = `https://tablebase.lichess.ovh/standard?fen=${encodeURIComponent(fen)}`;
+  // The tablebase currently answers 200 without a token, but sending one is
+  // harmless and keeps the call authenticated if that ever changes.
+  const token = process.env.LICHESS_TOKEN?.trim();
 
   try {
     const res = await fetch(lichessUrl, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'ChessAnalyzer/1.0'
+        'User-Agent': 'ChessAnalyzer/1.0',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15_000)
     });
 
     if (!res.ok) {

@@ -1,15 +1,19 @@
+export interface OpeningMove {
+  uci: string;
+  san: string;
+  white: number;
+  draws: number;
+  black: number;
+  averageRating?: number;
+  /** Grandmaster games only, exposed by the masters database. */
+  averageRatingGm?: number;
+}
+
 export interface OpeningData {
   white: number;
   draws: number;
   black: number;
-  moves: Array<{
-    uci: string;
-    san: string;
-    white: number;
-    draws: number;
-    black: number;
-    averageRating: number;
-  }>;
+  moves: OpeningMove[];
   opening?: {
     eco: string;
     name: string;
