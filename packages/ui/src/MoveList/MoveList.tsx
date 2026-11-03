@@ -29,7 +29,7 @@ const getBadgeText = (classification: MoveClassification) => {
     case 'brilliant': return '!!';
     case 'great': return '!';
     case 'best': return '★';
-    case 'book': return '📖';
+    case 'book': return '\u{1F4D6}';
     default: return '';
   }
 };
@@ -73,7 +73,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
     <div className="w-full h-full glass-panel rounded-xl flex flex-col overflow-hidden">
       <div className="px-4 py-3 bg-slate-900/80 border-b border-slate-700/50 flex justify-between items-center backdrop-blur-md">
         <h3 className="font-semibold text-slate-100 flex items-center gap-2">
-          <span className="text-indigo-400">📝</span> Coups Joués
+          <span className="text-indigo-400">&#128221;</span> Coups Joués
         </h3>
         <span className="text-xs text-slate-400">{records.length} coups</span>
       </div>
@@ -100,7 +100,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                 onClick={() => row.whiteIndex !== undefined && onNodeClick?.(row.whiteIndex)}
               >
                 <span>{row.white?.san}</span>
-                {row.white && row.white.classification !== 'good' && row.white.classification !== 'book' && (
+                {row.white && row.white.classification !== 'good' && (
                   <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.white.classification)}`}>
                     {getBadgeText(row.white.classification)}
                   </span>
@@ -117,7 +117,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                   onClick={() => row.blackIndex !== undefined && onNodeClick?.(row.blackIndex)}
                 >
                   <span>{row.black.san}</span>
-                  {row.black.classification !== 'good' && row.black.classification !== 'book' && (
+                  {row.black.classification !== 'good' && (
                     <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.black.classification)}`}>
                       {getBadgeText(row.black.classification)}
                     </span>

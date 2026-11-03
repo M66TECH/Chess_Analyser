@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ExplorerResult, OpeningData, TablebaseData } from '@chess-analyzer/chess-core';
+import type { ExplorerResult, OpeningExplorerResult, TablebaseData } from '@chess-analyzer/chess-core';
 
 export interface ExplorerMoveSelection {
   san: string;
@@ -12,14 +12,21 @@ export interface ExplorerProps {
 }
 
 export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-400 text-sm flex flex-col items-center justify-center gap-2">
+        <span className="text-2xl">&#128214;</span>
+        <span className="italic">Base de données indisponible</span>
+      </div>
+    );
+  }
 
   if ('isOpening' in data) {
-    const d = data as OpeningData;
+    const d = data as OpeningExplorerResult;
     return (
-      <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-200 text-sm">
+      <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-200 text-sm overflow-y-auto custom-scrollbar">
         <h3 className="font-bold text-slate-100 mb-3 flex items-center gap-2">
-          <span>📖</span> Base de données Maîtres
+          <span>&#128214;</span> Base de données Maîtres
         </h3>
         {d.moves.length === 0 ? (
           <div className="text-gray-500 text-center py-4">Aucune partie trouvée</div>
@@ -58,7 +65,7 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
     if (d.category === 'draw') globalStatusColor = 'text-gray-400';
 
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl text-white text-sm w-full">
+      <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-200 text-sm overflow-y-auto custom-scrollbar">
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-bold text-gray-300 flex items-center gap-2">
             <span>♟️</span> Syzygy Tablebase (7 pièces)

@@ -22,10 +22,11 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
   const points = useMemo(() => {
     if (records.length === 0) return [];
     
-    // Starting position is 0
+    // Starting position is 0. The x step is fixed so the curve never overflows
+    // the SVG width when a game is longer than 20 moves.
+    const stepX = width / Math.max(20, records.length);
+
     const startPoint = { x: 0, y: height / 2, index: -1 };
-    
-    const stepX = width / Math.max(20, records.length); // Minimum width for 20 moves to not stretch too much initially
 
     const mapped = records.map((record, i) => {
       // record.winProbAfter is [-1, 1]
@@ -57,6 +58,11 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
     return `${pathD} L ${lastX} ${height/2} L 0 ${height/2} Z`; // The clip-path will handle the separation
   }, [pathD, points, height]);
 
+  const activePoint = useMemo(
+    () => (activeIndex === undefined ? undefined : points.find(p => p.index === activeIndex)),
+    [points, activeIndex]
+  );
+
 
   if (records.length === 0) {
     return (
@@ -68,7 +74,13 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
 
   return (
     <div className="relative w-full h-full bg-gray-900 rounded-lg overflow-hidden select-none">
-      <svg width={width} height={height} className="absolute top-0 left-0">
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        className="absolute inset-0"
+      >
         <defs>
           <clipPath id="white-clip">
             <rect x="0" y="0" width={width} height={height / 2} />
@@ -98,6 +110,19 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
         {/* Main line */}
         <path d={pathD} fill="none" stroke="#60A5FA" strokeWidth={2} strokeLinejoin="round" />
 
+        {/* Active move marker */}
+        {activePoint && (
+          <line
+            x1={activePoint.x}
+            y1={0}
+            x2={activePoint.x}
+            y2={height}
+            stroke="#818CF8"
+            strokeWidth={1}
+            strokeDasharray="2 2"
+          />
+        )}
+
         {/* Data points */}
         {points.map((p, i) => {
           if (p.index === -1) return null; // Skip start point dot
@@ -111,7 +136,7 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
               fill={isActive ? "#FFFFFF" : "#3B82F6"}
               stroke="#1E3A8A"
               strokeWidth={1}
-              className="cursor-pointer hover:r-4 transition-all duration-150"
+              className="cursor-pointer transition-all duration-150"
               onClick={() => onNodeClick && onNodeClick(p.index)}
             />
           );
