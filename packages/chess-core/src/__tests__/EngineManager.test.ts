@@ -67,9 +67,30 @@ describe('EngineManager', () => {
 
       expect(worker.sent).toContain('setoption name UCI_AnalyseMode value true');
       expect(worker.sent).toContain('setoption name Analysis Contempt value Off');
-      expect(worker.sent).toContain('setoption name MultiPV value 3');
+      // MultiPV 1 par défaut : 3 lignes coûtent ~3× le temps de recherche.
+      expect(worker.sent).toContain('setoption name MultiPV value 1');
       expect(worker.sent).toContain('isready');
       expect(worker.sent).not.toContain('setoption name UCI_Chess960 value true');
+    });
+
+    it('setMultiPv monte le MultiPV à la demande et borne à [1, 5]', () => {
+      const { engine, worker } = setup();
+      engine.setMultiPv(3);
+      expect(worker.sent).toContain('setoption name MultiPV value 3');
+      expect(engine.multiPv).toBe(3);
+
+      engine.setMultiPv(99);
+      expect(worker.sent).toContain('setoption name MultiPV value 5');
+      expect(engine.multiPv).toBe(5);
+
+      engine.setMultiPv(0);
+      expect(worker.sent).toContain('setoption name MultiPV value 1');
+      expect(engine.multiPv).toBe(1);
+
+      // Pas de commande redondante si la valeur ne change pas.
+      const before = worker.sent.length;
+      engine.setMultiPv(1);
+      expect(worker.sent.length).toBe(before);
     });
 
     it('passe à prêt sur readyok', () => {

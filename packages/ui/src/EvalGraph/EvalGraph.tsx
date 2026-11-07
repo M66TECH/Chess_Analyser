@@ -136,7 +136,7 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
               fill={isActive ? "#FFFFFF" : "#3B82F6"}
               stroke="#1E3A8A"
               strokeWidth={1}
-              className="cursor-pointer transition-all duration-150"
+              className="cursor-pointer transition-colors duration-150"
               onClick={() => onNodeClick && onNodeClick(p.index)}
             />
           );

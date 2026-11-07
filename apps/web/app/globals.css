@@ -1,25 +1,53 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/*
+ * Performance des surfaces : `backdrop-filter` est l'effet le plus coûteux du
+ * compositeur (surtout sur mobile), et 26 éléments floutés superposés suffisent
+ * à faire chuter le scroll sous 30 fps.
+ * - blur réduit partout (6px au lieu de 12px) ;
+ * - supprimé complètement sous 768 px (mobile/tablette), où le flou est
+ *   invisible et le coût maximal.
+ * - `background-attachment: fixed` force un repaint complet à chaque frame :
+ *   remplacé par un dégradé non fixe.
+ */
 @layer base {
+  html {
+    /* Le défilement est géré par le document, pas par des conteneurs imbriqués */
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-slate-950 text-slate-200 antialiased selection:bg-indigo-500/30;
-    /* Subtle radial gradient background */
     background-image: radial-gradient(circle at 50% -20%, #1e1b4b 0%, #020617 80%);
-    background-attachment: fixed;
   }
 }
 
 @layer utilities {
   .glass-panel {
-    @apply bg-slate-900/60 backdrop-blur-md border border-slate-700/50 shadow-2xl;
-  }
-  
-  .glass-panel-light {
-    @apply bg-slate-800/40 backdrop-blur-sm border border-slate-700/30;
+    @apply bg-slate-900/80 border border-slate-700/50 shadow-2xl;
+    backdrop-filter: blur(6px);
   }
 
-  /* Custom scrollbar for modern feel */
+  .glass-panel-light {
+    @apply bg-slate-800/60 border border-slate-700/30;
+    backdrop-filter: blur(4px);
+  }
+
+  /* Mobile : aucun blur, l'opacité suffit visuellement et le scroll reste fluide */
+  @media (max-width: 768px) {
+    .glass-panel,
+    .glass-panel-light {
+      backdrop-filter: none;
+      @apply bg-slate-900/95;
+    }
+    .glass-panel-light {
+      @apply bg-slate-800/90;
+    }
+  }
+
+  /* Custom scrollbar (uniquement les panneaux internes) */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -28,6 +56,15 @@
     @apply bg-slate-900/50 rounded-full;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-slate-700/80 rounded-full hover:bg-slate-600 transition-colors;
+    @apply bg-slate-700/80 rounded-full;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-600;
+  }
+
+  /* Conteneur défilant : limite les repaints au panneau concerné */
+  .panel-scroll {
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 }

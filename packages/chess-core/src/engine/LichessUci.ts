@@ -112,12 +112,19 @@ export const UCI_INIT_COMMANDS = [
 ] as const;
 
 /**
- * Options de moteur. Lichess démarre en `MultiPV 1` puis monte à 3+ selon la
- * préférence utilisateur ; ici on expose les 3 meilleures lignes en permanence,
- * ce qui alimente les flèches d'analyse de l'échiquier.
+ * Options de moteur.
+ *
+ * `multiPv` est volontairement à **1** : c'est ce que fait Lichess par défaut
+ * (`protocol.ts`, préférence utilisateur à 1), et chaque ligne MultiPV
+ * supplémentaire coûte ~1× le temps de recherche. Les flèches alternatives
+ * (`evalState`/`multiPvs`) restent disponibles : `showMultiPv()` permet de
+ * monter à 3 à la demande.
  */
 export const UCI_ENGINE_OPTIONS = {
   threads: 2,
   hash: 32,
-  multiPv: 3,
+  multiPv: 1,
 } as const;
+
+/** Nombre de lignes demandées quand l'utilisateur veut voir les alternatives. */
+export const UCI_MULTIPV_WITH_LINES = 3;

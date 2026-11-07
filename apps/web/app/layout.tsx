@@ -23,9 +23,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="fr"
-      className={`${geistSans.variable} ${geistMono.variable} h-full`}
+      className={`${geistSans.variable} ${geistMono.variable}`}
     >
-      <body className="h-full overflow-hidden">
+      {/*
+       * La page défile normalement (barre du navigateur) : `min-h-screen` plutôt
+       * que `h-full`, et AUCUN `overflow-hidden` sur `body`.
+       * L'ancien `h-full overflow-hidden` coupait toute la hauteur excédante —
+       * le contenu des 3 colonnes (774 px) ne pouvait jamais défiler.
+       */}
+      <body className="min-h-screen">
         {/* L14 — Error Boundary pour capturer les crashs de composants */}
         <ErrorBoundary>
           {children}

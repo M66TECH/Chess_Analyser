@@ -93,7 +93,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
               
               {/* White Move */}
               <div 
-                className={`flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer transition-all duration-200 border border-transparent
+                className={`flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer transition-colors duration-150 border border-transparent
                   ${activeIndex === row.whiteIndex 
                     ? 'active-move bg-indigo-500/20 border-indigo-500/30 text-indigo-100 shadow-[inset_0_0_12px_rgba(99,102,241,0.1)]' 
                     : 'hover:bg-slate-800/60 text-slate-300'}`}
@@ -110,7 +110,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
               {/* Black Move */}
               {row.black ? (
                 <div 
-                  className={`flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer transition-all duration-200 border border-transparent
+                  className={`flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer transition-colors duration-150 border border-transparent
                     ${activeIndex === row.blackIndex 
                       ? 'active-move bg-indigo-500/20 border-indigo-500/30 text-indigo-100 shadow-[inset_0_0_12px_rgba(99,102,241,0.1)]' 
                       : 'hover:bg-slate-800/60 text-slate-300'}`}

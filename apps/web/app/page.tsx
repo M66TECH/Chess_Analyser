@@ -14,17 +14,32 @@ type PromotionCallback = (piece: 'q' | 'r' | 'b' | 'n') => void;
 export default function Home() {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [records, setRecords] = useState<MoveRecord[]>([]);
-  const [currentWinProb, setCurrentWinProb] = useState<number>(0);
-  const [currentCp, setCurrentCp] = useState<number | undefined>(0);
-  const [currentMate, setCurrentMate] = useState<number | undefined>(undefined);
-  const [currentDepth, setCurrentDepth] = useState<number>(0);
-  const [evalSource, setEvalSource] = useState<'cloud' | 'local' | undefined>(undefined);
-  const [engineStatus, setEngineStatus] = useState<'idle' | 'analyzing' | 'ready' | 'error'>('idle');
+  /**
+   * État d'évaluation groupé : un seul objet → UN setState par frame.
+   * Auparavant, 5 `setState` séparés étaient déclenchés à chaque ligne `info`
+   * du moteur (des dizaines par seconde) → rendus React en cascade.
+   */
+  const [evalState, setEvalState] = useState<{
+    winProb: number;
+    cp?: number;
+    mate?: number;
+    depth: number;
+    source?: 'cloud' | 'local';
+    status: 'idle' | 'analyzing' | 'ready' | 'error';
+  }>({ winProb: 0, cp: 0, depth: 0, status: 'idle' });
   const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
   const [showReport, setShowReport] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [threatMode, setThreatMode] = useState(false);
+  /**
+   * Lignes alternatives. Désactivé par défaut : MultiPV 3 coûte ~3× le temps
+   * de recherche Stockfish. Quand c'est désactivé, seule la meilleure ligne
+   * (flèche verte) est calculée et affichée.
+   */
+  const [showLines, setShowLines] = useState(false);
+  /** Miroir de `showLines` lisible depuis l'effet à deps `[]`. */
+  const showLinesRef = useRef(false);
   const [explorerData, setExplorerData] = useState<ExplorerResult>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<[string, string] | undefined>(undefined);
@@ -41,6 +56,79 @@ export default function Home() {
   const cloudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Tient l'eventBus pour les callbacks hors effet (fetch cloud). */
   const eventBusRef = useRef<GameEventBus | null>(null);
+
+  // ---------------------------------------------------------------- throttles
+  /**
+   * Accumulateur d'évaluation : le handler moteur écrit ici sans déclencher de
+   * rendu ; une seule frame (requestAnimationFrame) pousse le résultat dans
+   * l'état React. ~60 setState/s au pire, au lieu d'un par ligne `info`.
+   */
+  const evalAccum = useRef<{ value: typeof evalState | null }>({ value: null });
+  const evalRaf = useRef<number | null>(null);
+  /** Flèches : 10 fps suffisent largement et évitent de repeindre l'échiquier. */
+  const shapeAccum = useRef<{ value: Array<{ orig: string; dest?: string; brush: string }> | null }>({ value: null });
+  const shapeRaf = useRef<number | null>(null);
+  const lastShapeFlush = useRef(0);
+
+  /** Planifie l'application de l'évaluation à la prochaine frame. */
+  const scheduleEvalFlush = useCallback(() => {
+    if (evalRaf.current !== null) return;
+    evalRaf.current = requestAnimationFrame(() => {
+      evalRaf.current = null;
+      const pending = evalAccum.current.value;
+      if (!pending) return;
+      evalAccum.current.value = null;
+      setEvalState(pending);
+    });
+  }, []);
+
+  /** Planifie l'application des flèches (au plus toutes les 100 ms). */
+  const scheduleShapeFlush = useCallback(() => {
+    if (shapeRaf.current !== null) return;
+    const wait = Math.max(0, 100 - (performance.now() - lastShapeFlush.current));
+    shapeRaf.current = window.setTimeout(() => {
+      shapeRaf.current = null;
+      lastShapeFlush.current = performance.now();
+      const pending = shapeAccum.current.value;
+      if (!pending) return;
+      shapeAccum.current.value = null;
+      setShapes(pending);
+    }, wait) as unknown as number;
+  }, []);
+
+  // ------------------------------------------------------- cache des motifs
+  /**
+   * `MotifEngine.detectUndefended` coûte ~0.6–1.2 ms (SEE récursif sur 64
+   * cases). Elle ne dépend que du FEN, pas de la profondeur : on la mémoïse.
+   */
+  const motifCache = useRef<{
+    fen: string;
+    shapes: Array<{ orig: string; dest?: string; brush: string }>;
+  } | null>(null);
+
+  const getMotifShapes = useCallback((fenStr: string) => {
+    if (motifCache.current && motifCache.current.fen === fenStr) {
+      return motifCache.current.shapes;
+    }
+    const out: Array<{ orig: string; dest?: string; brush: string }> = [];
+    try {
+      const pos = Chess.fromSetup(parseFen(fenStr).unwrap()).unwrap();
+      for (const u of MotifEngine.detectUndefended(pos.board, pos.epSquare)) {
+        const file = String.fromCharCode(97 + (u.square % 8));
+        const rank = Math.floor(u.square / 8) + 1;
+        out.push({ orig: `${file}${rank}`, brush: 'red' });
+      }
+      for (const p of MotifEngine.detectPins(pos.board)) {
+        const file = String.fromCharCode(97 + (p.pinned % 8));
+        const rank = Math.floor(p.pinned / 8) + 1;
+        out.push({ orig: `${file}${rank}`, brush: 'blue' });
+      }
+    } catch {
+      // Position illisible : pas de motifs plutôt qu'un crash.
+    }
+    motifCache.current = { fen: fenStr, shapes: out };
+    return out;
+  }, []);
 
   /** Requête la base d'ouvertures au plus toutes les 300 ms (la dernière gagne). */
   const fetchExplorerDebounced = useCallback((fen: string) => {
@@ -108,6 +196,21 @@ export default function Home() {
     }
   }, []);
 
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Debounce 1,5 s : `PedagogyUpdated` arrive au moins deux fois par coup
+   * (record initial puis fiche coach enrichie). Sérialiser toute la partie à
+   * chaque événement bloquait le thread principal.
+   */
+  const saveGameDebounced = useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      saveGame();
+    }, 1500);
+  }, [saveGame]);
+
   const restoreGame = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -166,8 +269,12 @@ export default function Home() {
     eventBusRef.current = eventBus;
 
     eventBus.on('PedagogyUpdated', () => {
-      setRecords(gm.getMoveRecords());
-      saveGame();
+      const next = gm.getMoveRecords();
+      // Évite de remplacer le tableau si le nombre de records n'a pas changé
+      // ET que seule la fiche texte a été enrichie : sinon MoveList, EvalGraph
+      // et KeyMoments se re-rendent pour rien.
+      setRecords(prev => (prev.length === next.length && prev.at(-1)?.coachCard === next.at(-1)?.coachCard ? prev : next));
+      saveGameDebounced();
     });
 
     eventBus.on('MovePlayed', ({ nodeId }) => setActiveNodeId(nodeId));
@@ -180,64 +287,50 @@ export default function Home() {
         const currentFen = gmRef.current?.moveManager.getFen() ?? fen;
         if (evaluation.fen && evaluation.fen !== currentFen) return;
         const turn = currentFen.split(' ')[1] === 'w' ? 'white' : 'black';
-        // `normalize` rend désormais le cp POV Blanc (signe inversé pour les
-        // Noirs), cohérent avec `winProb` : plus besoin de signe manuel ici.
+        // `normalize` rend le cp POV Blanc (signe inversé pour les Noirs).
         const normCp = EvalNormalizer.normalize(evaluation.cp, evaluation.mate, turn);
-        setCurrentWinProb(EvalNormalizer.cpToWinningChances(normCp));
-        // Le mate affiché (`M3`) garde sa valeur UCI brute signée manuellement :
-        // `normalize` l'aurait replié à ±1000 (format +10.0 au lieu de M3).
+        // Le mate affiché (`M3`) garde sa valeur brute signée manuellement :
+        // `normalize` l'aurait replié à ±1000 (affiché +10.0 au lieu de M3).
         const sign = turn === 'white' ? 1 : -1;
-        setCurrentCp(typeof evaluation.cp === 'number' ? normCp : undefined);
-        setCurrentMate(typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined);
-        setCurrentDepth(evaluation.depth);
-        // Le nuage s'affiche tant que le local n'est pas monté en profondeur
-        // (showingCloud de lila) : la source du DERNIER eval affiché gagne.
-        setEvalSource(evaluation.source ?? 'local');
-        setEngineStatus(evaluation.depth >= 14 ? 'ready' : 'analyzing');
+
+        // Accumulation sans setState : un seul rendu par frame (voir scheduleEvalFlush).
+        evalAccum.current.value = {
+          winProb: EvalNormalizer.cpToWinningChances(normCp),
+          cp: typeof evaluation.cp === 'number' ? normCp : undefined,
+          mate: typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined,
+          depth: evaluation.depth,
+          source: evaluation.source ?? 'local',
+          status: evaluation.depth >= 14 ? 'ready' : 'analyzing',
+        };
+        scheduleEvalFlush();
       }
 
-      const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
-
       // Flèches MultiPV : la meilleure ligne en vert, les alternatives en bleu.
-      // `pvToShape` gère les promotions (`e7e8q`), là où une découpe par index
-      // restait fragile.
+      // `pvToShape` gère les promotions (`e7e8q`).
+      const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
       const pv3 = multiPvs.current.get(3);
       const pv2 = multiPvs.current.get(2);
       const pv1 = multiPvs.current.get(1);
 
-      for (const [pv, brush] of [
-        [pv3, 'paleBlue'],
-        [pv2, 'paleBlue'],
-        [pv1, 'paleGreen'],
-      ] as const) {
+      // Les alternatives ne sont dessinées que si l'utilisateur les a demandées
+      // (MultiPV 3 = 3× le coût de recherche, voir toggleLines).
+      // `showLinesRef` : l'effet a des deps `[]`, lire l'état directement y
+      // figerait la valeur initiale (false) pour toujours.
+      const alternatives: Array<[EngineEvaluation | undefined, string]> = showLinesRef.current
+        ? [[pv3, 'paleBlue'], [pv2, 'paleBlue']]
+        : [];
+
+      for (const [pv, brush] of [...alternatives, [pv1, 'paleGreen']] as Array<[EngineEvaluation | undefined, string]>) {
         const shape = pvToShape(pv?.pv, brush);
         if (shape) newShapes.push(shape);
       }
 
-      try {
-        const fenStr = gmRef.current?.moveManager.getFen() ?? fen;
-        const parsed = parseFen(fenStr).unwrap();
-        const pos = Chess.fromSetup(parsed).unwrap();
-        const board = pos.board;
-        const epSquare = pos.epSquare;
+      // Motifs : mémoïsés par FEN (coût ~1 ms sinon, à chaque ligne `info`).
+      const fenStr = gmRef.current?.moveManager.getFen() ?? fen;
+      newShapes.push(...getMotifShapes(fenStr));
 
-        const undefended = MotifEngine.detectUndefended(board, epSquare);
-        undefended.forEach(u => {
-          const file = String.fromCharCode(97 + (u.square % 8));
-          const rank = Math.floor(u.square / 8) + 1;
-          newShapes.push({ orig: `${file}${rank}`, brush: 'red' });
-        });
-
-        const pins = MotifEngine.detectPins(board);
-        pins.forEach(p => {
-          const file = String.fromCharCode(97 + (p.pinned % 8));
-          const rank = Math.floor(p.pinned / 8) + 1;
-          newShapes.push({ orig: `${file}${rank}`, brush: 'blue' });
-        });
-      } catch {
-      }
-
-      setShapes(newShapes);
+      shapeAccum.current.value = newShapes;
+      scheduleShapeFlush();
     });
 
     eventBus.on('ThreatEvaluationUpdated', (evaluation) => {
@@ -261,20 +354,23 @@ export default function Home() {
     });
 
     eventBus.on('AnalysisStarted', () => {
-      setEngineStatus('analyzing');
-      setCurrentDepth(0);
+      // Un seul setState groupé (voir evalState) au lieu de deux.
+      setEvalState(prev => ({ ...prev, depth: 0, status: 'analyzing' }));
     });
 
     eventBus.on('EngineError', (message) => {
-      setEngineStatus('error');
+      setEvalState(prev => ({ ...prev, status: 'error' }));
       showNotice(`Moteur Stockfish : ${message}`, 10000);
     });
 
     eventBus.on('PositionChanged', ({ fen }) => {
       multiPvs.current.clear();
       threatPvs.current.clear();
+      // Le cache de motifs est indexé par FEN : il se renouvelle tout seul,
+      // mais on libère l'entrée précédente pour ne pas garder de référence.
+      motifCache.current = null;
       setFen(fen);
-      setEvalSource(undefined);
+      setEvalState(prev => ({ ...prev, source: undefined }));
       fetchExplorerDebounced(fen);
       fetchCloudEvalDebounced(fen);
     });
@@ -294,6 +390,9 @@ export default function Home() {
     return () => {
       clearTimeout(restoreTimer);
       if (cloudTimer.current) clearTimeout(cloudTimer.current);
+      if (explorerTimer.current) clearTimeout(explorerTimer.current);
+      if (evalRaf.current !== null) cancelAnimationFrame(evalRaf.current);
+      if (shapeRaf.current !== null) clearTimeout(shapeRaf.current);
       eventBusRef.current = null;
       gm.terminate();
     };
@@ -398,8 +497,32 @@ export default function Home() {
     gmRef.current?.playMove(move.uci);
   }, []);
 
-  const toggleThreatMode = useCallback(() => {
-    setThreatMode(prev => {
+  /**
+   * Active/désactive les 3 meilleures lignes. Le MultiPV du moteur suit
+   * immédiatement (setoption), puis l'analyse de la position courante est
+   * relancée pour peupler les flèches.
+   */
+  const toggleLines = useCallback(() => {
+    setShowLines(prev => {
+      const next = !prev;
+      showLinesRef.current = next;
+      const engine = gmRef.current?.engineManager;
+      if (!engine) return next;
+      engine.setMultiPv(next ? 3 : 1);
+      if (!next) {
+        // Purge les PV secondaires : leurs flèches ne doivent plus s'afficher.
+        multiPvs.current.delete(2);
+        multiPvs.current.delete(3);
+        setShapes(prevShapes => prevShapes.filter(s => s.brush !== 'paleBlue'));
+      }
+      // Relance pour que le moteur applique le nouveau MultiPV immédiatement.
+      const currentFen = gmRef.current?.moveManager.getFen();
+      if (currentFen) engine.analyze(currentFen, 14);
+      return next;
+    });
+  }, []);
+
+  const toggleThreatMode = useCallback(() => {    setThreatMode(prev => {
       const next = !prev;
       if (next) {
         setShapes([]);
@@ -458,14 +581,14 @@ export default function Home() {
   }, [showNotice]);
 
   const depthLabel = useMemo(() => {
-    if (engineStatus === 'error') return 'Erreur';
-    if (engineStatus === 'idle' || currentDepth === 0) return 'Initialisation…';
+    if (evalState.status === 'error') return 'Erreur';
+    if (evalState.status === 'idle' || evalState.depth === 0) return 'Initialisation…';
     // showingCloud de lila : quand le dernier eval affiché vient du nuage,
     // on le dit explicitement tant que le local n'a pas rattrapé la profondeur.
-    if (evalSource === 'cloud') return `Nuage · profondeur ${currentDepth}`;
-    if (currentDepth >= 14) return `Profondeur ${currentDepth}`;
-    return `Profondeur ${currentDepth}/${14}`;
-  }, [engineStatus, currentDepth, evalSource]);
+    if (evalState.source === 'cloud') return `Nuage · profondeur ${evalState.depth}`;
+    if (evalState.depth >= 14) return `Profondeur ${evalState.depth}`;
+    return `Profondeur ${evalState.depth}/14`;
+  }, [evalState.status, evalState.depth, evalState.source]);
 
   return (
     <div className="min-h-screen w-full flex flex-col">
@@ -482,8 +605,8 @@ export default function Home() {
         </div>
 
         {/* Engine status indicator */}
-        <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 glass-panel-light rounded-lg px-3 py-1.5" title={evalSource === 'cloud' ? 'Évaluation depuis le nuage de Lichess' : 'Analyse Stockfish locale'}>
-          <span className={`w-2 h-2 rounded-full ${engineStatus === 'error' ? 'bg-red-400' : evalSource === 'cloud' ? 'bg-sky-400' : engineStatus === 'ready' ? 'bg-green-400' : engineStatus === 'analyzing' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
+        <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 glass-panel-light rounded-lg px-3 py-1.5" title={evalState.source === 'cloud' ? 'Évaluation depuis le nuage de Lichess' : 'Analyse Stockfish locale'}>
+          <span className={`w-2 h-2 rounded-full ${evalState.status === 'error' ? 'bg-red-400' : evalState.source === 'cloud' ? 'bg-sky-400' : evalState.status === 'ready' ? 'bg-green-400' : evalState.status === 'analyzing' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
           <span className="font-mono">{depthLabel}</span>
         </div>
 
@@ -491,7 +614,7 @@ export default function Home() {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowImport(true)}
-            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-colors border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
             title="Importer une partie PGN"
             aria-label="Importer PGN"
           >
@@ -500,7 +623,7 @@ export default function Home() {
           </button>
           <button
             onClick={handleExportPgn}
-            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-xs sm:text-sm font-medium transition-colors border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-white"
             title="Exporter en PGN"
             aria-label="Exporter PGN"
           >
@@ -509,7 +632,7 @@ export default function Home() {
           </button>
           <button
             onClick={handleReset}
-            className="px-3 py-1.5 bg-slate-800/70 hover:bg-red-900/40 rounded-lg text-xs sm:text-sm font-medium transition-all border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-red-300"
+            className="px-3 py-1.5 bg-slate-800/70 hover:bg-red-900/40 rounded-lg text-xs sm:text-sm font-medium transition-colors border border-slate-700/50 flex items-center gap-1.5 text-slate-300 hover:text-red-300"
             title="Nouvelle partie"
             aria-label="Nouvelle partie"
           >
@@ -518,7 +641,7 @@ export default function Home() {
           </button>
           <button
             onClick={() => setShowHelp(true)}
-            className="px-2.5 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-sm font-bold transition-all border border-slate-700/50 text-slate-400 hover:text-white"
+            className="px-2.5 py-1.5 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-sm font-bold transition-colors border border-slate-700/50 text-slate-400 hover:text-white"
             title="Aide & raccourcis (touche ?)"
             aria-label="Aide"
           >
@@ -548,7 +671,7 @@ export default function Home() {
           {/* --- Left Col: Board + EvalBar + Graph --- */}
           <div className="flex flex-col gap-3 sm:gap-4 w-full xl:w-auto xl:shrink-0">            {/* Board area */}
             <div className="flex gap-2 sm:gap-3">
-              <EvalBar winProb={currentWinProb} cp={currentCp} mate={currentMate} orientation={orientation} />
+              <EvalBar winProb={evalState.winProb} cp={evalState.cp} mate={evalState.mate} orientation={orientation} />
               <div className="relative flex-1 aspect-square max-w-[600px] shadow-2xl rounded-xl overflow-hidden border border-slate-800 ring-1 ring-white/10">
                 <ChessBoard
                   fen={fen}
@@ -562,14 +685,23 @@ export default function Home() {
 
             {/* Secondary controls row (also hosts the mobile panel tabs) */}
             <div className="flex gap-2 flex-wrap">
-              <button onClick={() => setShowReport(true)} className="flex-1 min-w-[100px] px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-all shadow-lg flex items-center gap-2 justify-center text-white border border-indigo-400/30">
+              <button onClick={() => setShowReport(true)} className="flex-1 min-w-[100px] px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors shadow-lg flex items-center gap-2 justify-center text-white border border-indigo-400/30">
                 <span>&#128202;</span> Bilan
               </button>
               <button
                 onClick={toggleThreatMode}
-                className={`flex-1 min-w-[100px] px-3 py-2 rounded-lg text-sm font-medium transition-all border flex items-center gap-2 justify-center ${threatMode ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'hover:bg-slate-800/60 text-slate-300 border-slate-700/50'}`}
+                className={`flex-1 min-w-[100px] px-3 py-2 rounded-lg text-sm font-medium transition-colors border flex items-center gap-2 justify-center ${threatMode ? 'bg-red-500/20 text-red-300 border-red-500/50' : 'hover:bg-slate-800/60 text-slate-300 border-slate-700/50'}`}
               >
                 <span>&#128680;</span> Menaces
+              </button>
+              <button
+                onClick={toggleLines}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border flex items-center gap-1.5 justify-center ${showLines ? 'bg-sky-500/20 text-sky-300 border-sky-500/50' : 'bg-slate-800/70 hover:bg-slate-700 text-slate-300 border-slate-700/50'}`}
+                title="Afficher les 3 meilleures lignes (plus lent)"
+                aria-pressed={showLines}
+              >
+                <span>&#9776;</span>
+                <span className="hidden sm:inline text-xs">Lignes</span>
               </button>
               <button onClick={() => setOrientation(o => o === 'white' ? 'black' : 'white')} className="px-3 py-2 bg-slate-800/70 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700/50 text-slate-300 hover:text-white" title="Retourner l'échiquier (F)">
                 <span>&#8634;</span>
@@ -615,9 +747,9 @@ export default function Home() {
               la colonne « Coups » tout en n'étant visible que sur « Base »).
               Desktop : les deux, comme avant. --- */}
           <div
-            className={`${mobilePanel === 'moves' || mobilePanel === 'explorer' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[300px] xl:shrink-0 xl:h-[774px]`}
+            className={`${mobilePanel === 'moves' || mobilePanel === 'explorer' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[300px] xl:shrink-0`}
           >
-            <div className={`flex-1 min-h-[300px] xl:min-h-[400px] ${mobilePanel === 'moves' ? 'block' : 'hidden'} xl:block`}>
+            <div className={`${mobilePanel === 'moves' ? 'block' : 'hidden'} xl:block h-[380px] xl:h-[460px]`}>
               <MoveList
                 records={records}
                 activeIndex={activeIndex}
@@ -627,14 +759,14 @@ export default function Home() {
                 }}
               />
             </div>
-            <div className={`${mobilePanel === 'explorer' ? 'block' : 'hidden'} xl:block h-[280px] xl:h-[260px] glass-panel-light rounded-xl overflow-hidden relative`}>
+            <div className={`${mobilePanel === 'explorer' ? 'block' : 'hidden'} xl:block h-[280px] glass-panel-light rounded-xl overflow-hidden relative`}>
               <Explorer data={explorerData} onMoveSelect={handleExplorerMove} />
             </div>
           </div>
 
           {/* --- Right Col: Coach --- */}
-          <div className={`${mobilePanel === 'coach' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[400px] xl:shrink-0 xl:h-[774px]`}>
-            <div className="flex-1 overflow-hidden min-h-[300px] xl:min-h-[400px]">
+          <div className={`${mobilePanel === 'coach' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[400px] xl:shrink-0`}>
+            <div className="min-h-[300px] xl:min-h-[420px]">
               <CoachBubble record={activeRecord} />
             </div>
           </div>

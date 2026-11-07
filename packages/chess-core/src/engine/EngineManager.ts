@@ -28,6 +28,9 @@ export class EngineManager {
   private isThreatMode = false;
   private currentAnalysisFen: string | null = null;
 
+  /** MultiPV actuellement configuré dans le moteur (voir `setMultiPv`). */
+  private currentMultiPv: number = UCI_ENGINE_OPTIONS.multiPv;
+
   /**
    * Mode demandé pendant que le moteur chargeait. Sans lui, un utilisateur qui
    * active les menaces avant `readyok` recevrait une analyse normale : au
@@ -117,6 +120,23 @@ export class EngineManager {
     this.send('ucinewgame');
   }
 
+  /**
+   * Monte le MultiPV à `lines` (1 par défaut = le plus rapide).
+   * `MultiPV > 1` multiplie le coût de recherche : on ne l'active que si
+   * l'utilisateur veut voir les lignes alternatives.
+   */
+  public setMultiPv(lines: number) {
+    const clamped = Math.min(5, Math.max(1, Math.trunc(lines)));
+    if (clamped === this.currentMultiPv) return;
+    this.currentMultiPv = clamped;
+    this.send(`setoption name MultiPV value ${clamped}`);
+  }
+
+  /** Lignes MultiPV actuellement configurées. */
+  public get multiPv(): number {
+    return this.currentMultiPv;
+  }
+
   // ---------------------------------------------------------------- messages
 
   private send(cmd: string) {
@@ -167,7 +187,7 @@ export class EngineManager {
 
     this.send(`setoption name Threads value ${UCI_ENGINE_OPTIONS.threads}`);
     this.send(`setoption name Hash value ${UCI_ENGINE_OPTIONS.hash}`);
-    this.send(`setoption name MultiPV value ${UCI_ENGINE_OPTIONS.multiPv}`);
+    this.send(`setoption name MultiPV value ${this.currentMultiPv}`);
 
     this.send('isready');
   }

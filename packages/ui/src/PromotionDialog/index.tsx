@@ -37,7 +37,7 @@ export const PromotionDialog: React.FC<PromotionDialogProps> = ({ color, onSelec
             <button
               key={piece}
               onClick={() => onSelect(piece)}
-              className={`flex flex-col items-center gap-1 p-3 rounded-xl border border-slate-600/50 hover:border-indigo-500 hover:bg-indigo-500/10 transition-all ${bgColor}`}
+              className={`flex flex-col items-center gap-1 p-3 rounded-xl border border-slate-600/50 hover:border-indigo-500 hover:bg-indigo-500/10 transition-colors ${bgColor}`}
               aria-label={label}
               title={label}
             >

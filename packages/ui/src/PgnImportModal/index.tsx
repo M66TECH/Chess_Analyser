@@ -104,7 +104,7 @@ export const PgnImportModal: React.FC<PgnImportModalProps> = ({ onImport, onClos
         <div className="flex gap-3 mt-4">
           <button
             onClick={handleSubmit}
-            className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold transition-all shadow-lg text-white border border-indigo-400/30"
+            className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold transition-colors shadow-lg text-white border border-indigo-400/30"
           >
             Analyser la partie
           </button>
