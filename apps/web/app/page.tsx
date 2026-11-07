@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble, PgnImportModal, PromotionDialog, BoardDemo } from '@chess-analyzer/ui';
-import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape, CloudEvalService, GameEventBus, buildDemo, type DemoStep } from '@chess-analyzer/chess-core';
+import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape, CloudEvalService, GameEventBus, ExplanationEngine, buildDemo, type DemoStep } from '@chess-analyzer/chess-core';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -535,7 +535,32 @@ export default function Home() {
       return;
     }
 
+    // 1. Ouverture IMMÉDIATE avec les phrases déterministes (pièce + case).
     setDemo({ title, startFen, steps });
+
+    // 2. Les phrases du coach arrivent ensuite : brièveté et ton imposés par
+    //    le prompt, et garanties côté code (1 phrase/coup, sans notation).
+    const kind: 'punish' | 'idea' =
+      isError && refutation.length > 0 ? 'punish' : 'idea';
+    const demoFen = startFen;
+
+    void ExplanationEngine.generateDemoCaptions({
+      startFen: demoFen,
+      uciMoves: steps.map(s => s.uci),
+      kind,
+      fallbackCaptions: steps.map(s => s.caption),
+    }).then(captions => {
+      setDemo(current => {
+        if (!current || current.startFen !== demoFen) return current; // démo fermée/changée
+        return {
+          ...current,
+          steps: current.steps.map((step, i) => ({
+            ...step,
+            caption: captions[i] ?? step.caption,
+          })),
+        };
+      });
+    });
   }, [showNotice]);
 
   /** Une démo est-elle possible pour ce record ? */
