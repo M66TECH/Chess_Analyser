@@ -9,6 +9,7 @@ export * from './services/CloudEvalService';
 export * from './pedagogy/MoveClassifier';
 export * from './pedagogy/MotifEngine';
 export * from './pedagogy/types';
+export * from './pedagogy/MoveNarrator';
 export * from './analysis/EvalNormalizer';
 export * from './analysis/AccuracyScore';
 export * from './analysis/LichessAccuracy';

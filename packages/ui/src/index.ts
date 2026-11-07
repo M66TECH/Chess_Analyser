@@ -8,3 +8,4 @@ export * from './KeyMoments';
 export * from './CoachBubble';
 export * from './PgnImportModal';
 export * from './PromotionDialog';
+export * from './BoardDemo';

@@ -88,6 +88,8 @@ export interface VerifiedTacticalFacts {
  * motifs tactiques SEE/clouages et structure de pions calculés sur l'échiquier).
  */
 export interface ExplanationContext {
+  /** Position avant le coup : indispensable pour décrire les coups en clair. */
+  fen_before: string;
   played: {
     san: string;
     uci: string;
@@ -222,6 +224,7 @@ export function buildExplanationContext({
       : null;
 
   const ctx: ExplanationContext = {
+    fen_before: record.fenBefore,
     played: {
       san: record.san,
       uci: record.playedMove,

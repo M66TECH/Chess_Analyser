@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble, PgnImportModal, PromotionDialog } from '@chess-analyzer/ui';
-import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape, CloudEvalService, GameEventBus } from '@chess-analyzer/chess-core';
+import { ChessBoard, EvalGraph, EvalBar, MoveList, GameReport, Explorer, KeyMoments, CoachBubble, PgnImportModal, PromotionDialog, BoardDemo } from '@chess-analyzer/ui';
+import { GameManager, MoveRecord, EvalNormalizer, MotifEngine, AccuracyScore, ExplorerService, ExplorerResult, PgnParser, pvToShape, CloudEvalService, GameEventBus, buildDemo, type DemoStep } from '@chess-analyzer/chess-core';
 import { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -46,6 +46,11 @@ export default function Home() {
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
   const [notice, setNotice] = useState<string | null>(null);
   const [promotion, setPromotion] = useState<{ from: string; to: string; callback: PromotionCallback } | null>(null);
+  /**
+   * Démonstration sur l'échiquier : étapes + position de départ. Isolée de la
+   * partie (le plateau réel n'est jamais modifié).
+   */
+  const [demo, setDemo] = useState<{ title: string; startFen: string; steps: DemoStep[] } | null>(null);
   const [mobilePanel, setMobilePanel] = useState<'moves' | 'coach' | 'explorer'>('coach');
   const multiPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const threatPvs = useRef<Map<number, EngineEvaluation>>(new Map());
@@ -491,6 +496,56 @@ export default function Home() {
     }
   }, []);
 
+  /**
+   * Ouvre la démonstration d'une variante.
+   *
+   * Choix de la suite montrée :
+   * - coup fautif → la **réfutation** (la réponse de l'adversaire depuis la
+   *   position après le coup) : « voilà comment il peut vous punir » ;
+   * - coup perfectible → la **meilleure ligne** depuis la position avant le
+   *   coup : « voilà ce qu'il fallait jouer ».
+   * Aucune invention : les coups viennent de l'analyse Stockfish (`refutationPv`
+   * / `bestPv` du record).
+   */
+  const handleShowDemo = useCallback((record: MoveRecord) => {
+    const isError =
+      record.classification === 'inaccuracy' ||
+      record.classification === 'mistake' ||
+      record.classification === 'blunder';
+
+    const refutation = record.refutationPv ?? [];
+    const best = record.bestPv ?? [];
+
+    let startFen = record.fenBefore;
+    let pv = best;
+    let title = 'Ce qu’il fallait jouer';
+
+    if (isError && refutation.length > 0) {
+      startFen = record.fenAfter;
+      pv = refutation;
+      title = 'Comment l’adversaire peut en profiter';
+    } else if (best.length === 0) {
+      showNotice('Pas de suite de coups disponible pour ce coup.', 4000);
+      return;
+    }
+
+    const steps = buildDemo(startFen, pv, 6);
+    if (steps.length === 0) {
+      showNotice('Démonstration indisponible pour cette position.', 4000);
+      return;
+    }
+
+    setDemo({ title, startFen, steps });
+  }, [showNotice]);
+
+  /** Une démo est-elle possible pour ce record ? */
+  const canShowDemo = useCallback((record?: MoveRecord) => {
+    if (!record) return false;
+    const hasRefutation = (record.refutationPv?.length ?? 0) > 0;
+    const hasBest = (record.bestPv?.length ?? 0) > 0;
+    return hasRefutation || hasBest;
+  }, []);
+
   const handleExplorerMove = useCallback((move: { san: string; uci: string }) => {
     if (!move.uci) return;
     setLastMove([move.uci.slice(0, 2), move.uci.slice(2, 4)]);
@@ -767,7 +822,7 @@ export default function Home() {
           {/* --- Right Col: Coach --- */}
           <div className={`${mobilePanel === 'coach' ? 'flex' : 'hidden'} xl:flex flex-col gap-4 w-full xl:w-[400px] xl:shrink-0`}>
             <div className="min-h-[300px] xl:min-h-[420px]">
-              <CoachBubble record={activeRecord} />
+              <CoachBubble record={activeRecord} onShowDemo={handleShowDemo} canShowDemo={canShowDemo(activeRecord)} />
             </div>
           </div>
 
@@ -787,6 +842,15 @@ export default function Home() {
         <PgnImportModal
           onImport={handleImportPgn}
           onClose={() => setShowImport(false)}
+        />
+      )}
+
+      {demo && (
+        <BoardDemo
+          title={demo.title}
+          startFen={demo.startFen}
+          steps={demo.steps}
+          onClose={() => setDemo(null)}
         />
       )}
 

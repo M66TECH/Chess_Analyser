@@ -5,6 +5,13 @@ import type { InsightKind } from '@chess-analyzer/chess-core';
 
 export interface CoachBubbleProps {
   record?: MoveRecord;
+  /**
+   * Ouvre la démonstration sur l'échiquier. Fournie par la page quand une
+   * variante est disponible : on montre les coups plutôt que de les décrire.
+   */
+  onShowDemo?: (record: MoveRecord) => void;
+  /** `true` si une suite de coups peut être montrée pour ce record. */
+  canShowDemo?: boolean;
 }
 
 /** Icône + couleur par type d'explication (les 5 axes pédagogiques). */
@@ -28,7 +35,7 @@ const CLASSIFICATION_STYLE: Record<string, { badge: string; glow: string; label:
   book: { badge: 'bg-purple-400/20 border-purple-400/50 text-purple-200', glow: '', label: 'Théorie' },
 };
 
-export const CoachBubble: React.FC<CoachBubbleProps> = ({ record }) => {
+export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, canShowDemo = false }) => {
   if (!record) {
     return (
       <div className="glass-panel rounded-xl p-6 w-full h-full min-h-[280px] flex flex-col items-center justify-center text-center">
@@ -127,6 +134,20 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record }) => {
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">{card.takeaway}</p>
               </div>
+            )}
+
+            {/*
+              Plutôt qu'un long texte, on montre la suite sur l'échiquier :
+              la démonstration joue les deux camps coup par coup.
+            */}
+            {canShowDemo && onShowDemo && (
+              <button
+                onClick={() => onShowDemo(record)}
+                className="mt-1 w-full px-3 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30 transition-colors flex items-center justify-center gap-2"
+              >
+                <span aria-hidden="true">&#9654;</span>
+                Montrer sur l’échiquier
+              </button>
             )}
           </div>
         ) : (

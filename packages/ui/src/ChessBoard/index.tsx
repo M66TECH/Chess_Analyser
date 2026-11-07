@@ -14,6 +14,11 @@ export interface ChessBoardProps {
   orientation?: 'white' | 'black';
   lastMove?: [string, string];
   shapes?: Array<{ orig: string; dest?: string; brush: string }>;
+  /**
+   * `false` = plateau en lecture seule (démonstration, prévisualisation).
+   * Par défaut interactif.
+   */
+  interactive?: boolean;
 }
 
 function computeBoardState(fen: string): { dests: Map<Key, Key[]>; isCheck: boolean } {
@@ -40,6 +45,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   orientation,
   lastMove,
   shapes = [],
+  interactive = true,
 }) => {
   const { dests, isCheck } = useMemo(() => computeBoardState(fen), [fen]);
 
@@ -67,13 +73,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         width="100%"
         height="100%"
         fen={fen}
-        onMove={onMove}
+        onMove={interactive ? onMove : undefined}
         orientation={effectiveOrientation}
         turnColor={turn}
         movable={{
           free: false,
-          color: 'both',
-          dests,
+          color: interactive ? 'both' : 'white',
+          dests: interactive ? dests : new Map(),
         }}
         lastMove={lastMoveKeys}
         drawable={{ enabled: true, visible: true, shapes: drawShapes }}

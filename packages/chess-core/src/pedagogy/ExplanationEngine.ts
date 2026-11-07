@@ -10,6 +10,7 @@ import {
   type VerifiedTacticalFacts,
 } from './ExplanationContext';
 import { MotifEngine } from './MotifEngine';
+import { describeMove } from './MoveNarrator';
 import type { MoveRecord } from './types';
 
 import { parseFen } from 'chessops/fen';
@@ -189,43 +190,37 @@ function extractVerifiedTacticalFacts(record: MoveRecord): VerifiedTacticalFacts
  */
 export class ExplanationEngine {
   private static readonly SYSTEM_PROMPT = `# Rôle
-Tu es ChessCoach, entraîneur d'échecs francophone rigoureux et bienveillant.
-Tu expliques une analyse DÉJÀ calculée par Stockfish/Lichess et par notre extracteur géométrique (SEE, clouages, structure de pions). Tu ne recalcules pas, tu expliques les faits prouvés.
+Tu es ChessCoach, entraîneur d'échecs pour DÉBUTANTS. Tu lis une analyse déjà calculée (Stockfish + Lichess + faits géométriques vérifiés). Tu ne recalcules rien.
 
-# Hiérarchie stricte des preuves (INTERDICTION D'HALLUCINER)
-Le JSON fourni est ta seule source de vérité. Distingue obligatoirement :
-1. Les FAITS ÉTABLIS PAR LE MOTEUR : coup joué (played.san), meilleur coup (best.san), évaluations (evaluation.*) et verdict (verdict.*).
-2. LES CONSÉQUENCES DES VARIANTES : la variante recommandée (best.pv_san) et la réfutation adverse (tactical_facts.refutation_pv_san, tactical_facts.material_delta_in_pv).
-3. LES MOTIFS VÉRIFIÉS SUR L'ÉCHIQUIER (tactical_facts.*) :
-   - Pièces laissées en prise : tactical_facts.newly_undefended_own_pieces
-   - Pièces adverses attaquées : tactical_facts.newly_undefended_enemy_pieces
-   - Clouages : tactical_facts.new_pins_against_player et tactical_facts.new_pins_by_player
-   - Structure de pions et roi : tactical_facts.positional_changes
-4. LES INTERPRÉTATIONS POSITIONNELLES : si aucun motif tactique n'est présent dans tactical_facts, formule l'explication stratégique avec prudence (« ce coup cède du contrôle central / perd un temps ») sans JAMAIS inventer une fourchette, un clouage ou une pièce en prise absents de tactical_facts.
+# Règle absolue : court et simple
+- Le joueur débute. Il ne connaît pas la notation.
+- INTERDIT d'écrire une notation seule : ni « Nf3 », ni « Bxc6 », ni « a4 », ni « e2e4 ».
+- Nomme TOUJOURS la pièce en français (pion, cavalier, fou, tour, dame, roi) et indique sa case d'arrivée en clair : « le cavalier va en f3 ».
+- Aucun jargon : ni « centipawn », ni « tempo », ni « structure », ni « zone », ni « initiative ».
+- Pas de paragraphe. Une idée = une phrase de 15 mots maximum.
 
-# Ce que tu dois expliquer, dans cet ordre
-1. played_move — ce que le coup joué fait concrètement (pièce déplacée, prise confirmée par played.captured, ou menace vérifiée).
-2. mistake — seulement si verdict.classification vaut inaccuracy, mistake ou blunder : pourquoi c'est mauvais (cite la pièce en prise de newly_undefended_own_pieces ou la réponse adverse refutation_pv_san[0] si présentes).
-3. missed_move — seulement si best.san existe et diffère du coup joué : ce que le meilleur coup best.san (et best.pv_san) apportait.
-4. consequence — la conséquence tactique ou stratégique immédiate prouvée par les données.
-5. good_decision — si le coup est bon/meilleur/brillant : pourquoi c'était le bon choix.
+# Longueur imposée
+- headline : 10 mots maximum. C'est le conseil principal.
+- insights : 1 ou 2 maximum (jamais 3 ni 5). Chaque text ≤ 20 mots.
+- takeaway : une seule phrase courte, actionnable.
+- Si tu ne peux pas faire court, NE DIS RIEN de plus : la démonstration visuelle remplace l'explication.
 
-# Règles de rédaction
-- Français simple et précis. Pas de « centipawn » : parle en « pions d'avantage » ou « chances ».
-- Une idée par phrase, 25 mots maximum par phrase.
-- N'affirme JAMAIS qu'un coup gagne du matériel sans que played.captured ou tactical_facts.material_delta_in_pv le confirme.
-- N'invente JAMAIS un clouage, une fourchette ou une pièce en prise qui ne figure pas dans tactical_facts.
-- Si opening.is_theory_move est vrai : ce coup est de la théorie humaine. Ne le présente jamais comme une erreur.
+# Structure conseillée
+1. Le PROBLÈME, en une phrase (« votre dame peut être prise »).
+2. L'ACTION recommandée, en une phrase (« mettez-la en sécurité en d1 »).
+C'est tout. Le reste est inutile.
 
-# Séquences de mat (context.mate_sequence)
-- « created » : à cause de ce coup, le joueur subit un mat forcé (« le mat est désormais inévitable »).
-- « lost » : le joueur avait un mat forcé et l'a laissé filer.
-- « delayed » : le mat reste forcé, simplement en plus de coups. Ce n'est PAS une erreur.
+# Preuves
+Le JSON fourni est la seule source. N'invente jamais une pièce en prise, un clouage ou une fourchette absents de tactical_facts. Si best.san existe, tu peux le décrire en français (« le fou va en c4 ») mais jamais en notation seule.
+Si opening.is_theory_move est vrai, ne présente pas le coup comme une erreur.
+
+# Séquences de mat
+- created : « le mat devient inévitable ». lost : « vous aviez un mat et il est perdu ». delayed : pas une erreur.
 
 # Format
-Réponds UNIQUEMENT par un objet JSON valide, sans texte autour :
+Réponds UNIQUEMENT par un objet JSON valide :
 {"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
-Les valeurs possibles de "kind" sont exactement : played_move, missed_move, mistake, good_decision, consequence.`;
+kinds autorisés : played_move, missed_move, mistake, good_decision, consequence.`;
 
   /** Génère la fiche pédagogique d'un coup analysé (avec appel IA + fallback local). */
   public static async generateCard(
@@ -375,132 +370,138 @@ ${JSON.stringify(context, null, 2)}
   }
 
   /**
-   * Explication déterministe enrichie par les faits tactiques/positionnels
-   * vérifiés (sans réseau). Sert de secours quand le modèle est indisponible
-   * et lors des analyses complètes de PGN.
+   * Explication déterministe, COURTE et sans notation (ni « Nf3 » ni « e2e4 »).
+   * Sert de secours quand le modèle est indisponible et lors des imports PGN.
+   *
+   * Structure imposée : un constat (le problème), une action (quoi faire), et
+   * un seul conseil final. Les variantes ne sont pas racontées en texte : elles
+   * sont montrées sur l'échiquier (`buildDemo`), comme demandé.
    */
   public static fallbackCard(context: ExplanationContext, level: PlayerLevel): CoachCard {
-    const { played, best, verdict, evaluation, context: moveCtx, tactical_facts: facts } = context;
-    const cp = (v: number | null) => (v === null ? '—' : `${v > 0 ? '+' : ''}${(v / 100).toFixed(1)}`);
-
-    const label: Record<string, string> = {
-      brilliant: 'Coup brillant',
-      great: 'Très bon coup',
-      best: 'Meilleur coup',
-      excellent: 'Excellent coup',
-      good: 'Bon coup',
-      book: 'Coup de théorie',
-      inaccuracy: 'Imprécision',
-      mistake: 'Erreur',
-      blunder: 'Gaffe',
-    };
-
-    const insights: Insight[] = [];
-    const pieceLabel = played.piece ? `le ${played.piece}` : 'la pièce';
-    const capture = played.captured ? ` et prend ${played.captured === 'pion (en passant)' ? 'un pion' : `le ${played.captured}`}` : '';
-
-    insights.push({
-      kind: 'played_move',
-      text: `${played.san} déplace ${pieceLabel}${capture}.`,
-    });
+    const { played, best, verdict, context: moveCtx, tactical_facts: facts } = context;
 
     const isError =
       verdict.classification === 'inaccuracy' ||
       verdict.classification === 'mistake' ||
       verdict.classification === 'blunder';
 
+    // Description du coup joué en français simple (jamais la notation seule).
+    const playedDesc = describeMove(context.fen_before, played.uci);
+    const playedText = playedDesc
+      ? playedDesc.text
+      : describePlayedFromContext(played);
+
+    // Le meilleur coup, décrit pareil (pièce + case).
+    const bestDesc = best?.uci ? describeMove(context.fen_before, best.uci) : null;
+
+    const insights: Insight[] = [];
+
     if (isError) {
-      const loss = evaluation.player_loss_cp;
+      // 1. Le problème, en une phrase.
       if (moveCtx.mate_sequence === 'created') {
-        insights.push({
-          kind: 'mistake',
-          text: 'Ce coup permet un mat forcé adverse : le mat est désormais inévitable.',
-        });
+        insights.push({ kind: 'mistake', text: 'Votre roi va se faire mater.' });
       } else if (moveCtx.mate_sequence === 'lost') {
-        insights.push({
-          kind: 'mistake',
-          text: 'Ce coup laisse échapper une séquence de mat forcé.',
-        });
+        insights.push({ kind: 'mistake', text: 'Vous laissez filer un mat gagnant.' });
       } else if (facts && facts.newly_undefended_own_pieces.length > 0) {
         const hanging = facts.newly_undefended_own_pieces[0];
         insights.push({
           kind: 'mistake',
-          text: `Ce coup laisse votre ${hanging.piece} en ${hanging.square} sans défense suffisante (${cp(evaluation.before)} → ${cp(evaluation.after)}).`,
+          text: `Votre ${hanging.piece} en ${hanging.square} peut être prise.`,
         });
       } else if (facts && facts.new_pins_against_player.length > 0) {
         const pin = facts.new_pins_against_player[0];
         insights.push({
           kind: 'mistake',
-          text: `Ce coup expose votre ${pin.pinned_piece} en ${pin.pinned_square} à un clouage par ${pin.pinner_square} (${cp(evaluation.before)} → ${cp(evaluation.after)}).`,
+          text: `Votre ${pin.pinned_piece} ne peut plus bouger sans perdre du matériel.`,
         });
       } else {
         insights.push({
           kind: 'mistake',
-          text:
-            loss !== null
-              ? `Ce coup fait perdre environ ${(loss / 100).toFixed(1)} pion(s) de valeur : ${cp(evaluation.before)} → ${cp(evaluation.after)}.`
-              : "Ce coup détériore la position selon l'analyse.",
+          text: 'Ce coup affaiblit votre position.',
         });
       }
 
-      if (facts && facts.refutation_pv_san.length > 0 && level !== 'debutant') {
-        const refutationLine = facts.refutation_pv_san.slice(0, 3).join(' ');
-        insights.push({
-          kind: 'consequence',
-          text: `L'adversaire peut punir ce coup par la suite : ${refutationLine}.`,
-        });
-      } else if (facts && facts.positional_changes.doubled_pawns_created.length > 0) {
-        insights.push({
-          kind: 'consequence',
-          text: `La structure de pions est affaiblie (pions doublés en ${facts.positional_changes.doubled_pawns_created.join(', ')}).`,
-        });
-      }
-    }
-
-    if (best?.san && best.san !== played.san) {
-      const pvContinuation =
-        level !== 'debutant' && best.pv_san && best.pv_san.length > 1
-          ? ` (suite : ${best.pv_san.slice(0, 3).join(' ')})`
-          : '';
+      // 2. L'action recommandée, en une phrase.
       insights.push({
         kind: 'missed_move',
-        text: `Le meilleur coup était ${best.san}${pvContinuation}, qui gardait la position plus solide.`,
+        text: bestDesc ? `Jouez plutôt : ${lowerFirst(bestDesc.text)}` : 'Cherchez un coup qui protège vos pièces.',
+      });
+    } else {
+      insights.push({ kind: 'played_move', text: playedText });
+      insights.push({
+        kind: 'good_decision',
+        text: 'C’est un bon coup : vous ne perdez rien.',
       });
     }
 
-    if (!isError && played.captured) {
-      insights.push({
-        kind: 'consequence',
-        text: `Le gain de matériel se confirme : ${played.captured} disparaît de l'échiquier.`,
-      });
-    } else if (!isError) {
-      if (facts && facts.new_pins_by_player.length > 0) {
-        const pin = facts.new_pins_by_player[0];
-        insights.push({
-          kind: 'good_decision',
-          text: `Excellent choix qui cloue le ${pin.pinned_piece} adverse en ${pin.pinned_square}.`,
-        });
-      } else if (facts && facts.newly_undefended_enemy_pieces.length > 0) {
-        const target = facts.newly_undefended_enemy_pieces[0];
-        insights.push({
-          kind: 'good_decision',
-          text: `Ce coup met directement sous pression le ${target.piece} adverse en ${target.square}.`,
-        });
-      } else {
-        insights.push({
-          kind: 'good_decision',
-          text: "Le coup respecte l'évaluation de la position et ne concède rien.",
-        });
-      }
+    // Un seul conseil final, très court.
+    let takeaway: string;
+    if (moveCtx.mate_sequence === 'created') {
+      takeaway = 'Avant de jouer, vérifiez ce que l’adversaire peut faire contre votre roi.';
+    } else if (isError) {
+      takeaway = 'Vérifiez toujours si vos pièces sont protégées après votre coup.';
+    } else if (bestDesc) {
+      takeaway = 'Continuez à protéger vos pièces.';
+    } else {
+      takeaway = 'Vous progressez : la position reste saine.';
     }
 
     return {
-      headline: label[verdict.classification] ?? 'Coup joué',
+      headline: isError ? labelCourt(verdict.classification) : 'Bon coup',
       insights,
-      takeaway: isError
-        ? "Cherchez d'abord les coups actifs et captures de l'adversaire avant de jouer."
-        : 'Continuez avec des coups qui ne laissent aucune pièce sans défense.',
+      takeaway,
       level,
     };
   }
+}
+
+// --- aides locales ----------------------------------------------------------
+
+/** Verdict en mots simples (pas de vocabulaire technique). */
+function labelCourt(classification: string): string {
+  switch (classification) {
+    case 'blunder':
+      return 'Grosse erreur';
+    case 'mistake':
+      return 'Erreur';
+    case 'inaccuracy':
+      return 'Petite erreur';
+    default:
+      return 'Coup correct';
+  }
+}
+
+function describePiece(piece?: string): string {
+  if (!piece) return 'une pièce';
+  const article = ['tour', 'dame'].includes(piece) ? 'la' : 'le';
+  return `${article} ${piece}`;
+}
+
+/**
+ * Repli quand la position n'a pas pu être relue : on utilise les faits déjà
+ * extraits (pièce déplacée, prise, échec) pour rester compréhensible.
+ */
+function describePlayedFromContext(played: {
+  piece?: string;
+  captured?: string | null;
+  is_check: boolean;
+  color: 'white' | 'black';
+}): string {
+  const piece = describePiece(played.piece).replace(/^(le|la) /, '');
+  let text: string;
+  if (played.captured) {
+    // « pion (en passant) » reste lisible tel quel.
+    const captured = played.captured.startsWith('pion')
+      ? played.captured
+      : `${['tour', 'dame'].includes(played.captured) ? 'la' : 'le'} ${played.captured}`;
+    text = `Votre ${piece} prend ${captured}.`;
+  } else {
+    text = `Votre ${piece} change de case.`;
+  }
+  if (played.is_check) text += ' Le roi est en échec.';
+  return text;
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }

@@ -166,7 +166,7 @@ describe('ExplanationEngine.fallbackCard', () => {
   it('explique un coup correct sans le présenter comme une erreur', () => {
     const ctx = buildExplanationContext({ record: record(), playedPiece: 'pion' });
     const card = ExplanationEngine.fallbackCard(ctx, 'intermediaire');
-    expect(card.headline).toBe('Meilleur coup');
+    expect(card.headline).toBe('Bon coup');
     expect(card.insights.some(i => i.kind === 'played_move')).toBe(true);
     expect(card.insights.some(i => i.kind === 'mistake')).toBe(false);
     expect(card.takeaway.length).toBeGreaterThan(0);
@@ -187,7 +187,7 @@ describe('ExplanationEngine.fallbackCard', () => {
       playedPiece: 'cavalier',
     });
     const card = ExplanationEngine.fallbackCard(ctx, 'debutant');
-    expect(card.headline).toBe('Gaffe');
+    expect(card.headline).toBe('Grosse erreur');
     expect(card.insights.some(i => i.kind === 'mistake')).toBe(true);
     expect(card.insights.some(i => i.kind === 'missed_move')).toBe(true);
     expect(card.insights.find(i => i.kind === 'missed_move')?.text).toContain('e4');
@@ -225,14 +225,14 @@ describe('ExplanationEngine.generateCard', () => {
   it('retombe sur une explication locale si le modèle échoue', async () => {
     vi.spyOn(RiverAPI, 'complete').mockRejectedValue(new Error('network down'));
     const card = await ExplanationEngine.generateCard(record({ classification: 'blunder', cpAfter: -300 }));
-    expect(card.headline).toBe('Gaffe');
+    expect(card.headline).toBe('Grosse erreur');
     expect(card.insights.length).toBeGreaterThan(0);
   });
 
   it('retombe sur l\'explication locale si le modèle renvoie du vide', async () => {
     vi.spyOn(RiverAPI, 'complete').mockResolvedValue('');
     const card = await ExplanationEngine.generateCard(record());
-    expect(card.headline).toBe('Meilleur coup');
+    expect(card.headline).toBe('Bon coup');
   });
 
   it('n\'envoie au modèle que des faits issus de l\'analyse', async () => {
@@ -247,8 +247,8 @@ describe('ExplanationEngine.generateCard', () => {
     expect(prompt).toContain('"move_number": 1');
   });
 
-  it('extrait et cite dans la fiche locale la pièce laissée en prise et la variante de réfutation', () => {
-    // Blancs jouent 1. e4 e5 2. Nf3 Nc6, puis dans une position où le cavalier va en e5 attaqué par c6
+  it('reste court, sans notation et sans déballer la variante (nouvelle consigne)', () => {
+    // Position où le cavalier va en e5 se faire prendre par le pion c6.
     const fenBefore = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
     const fenAfter = 'r1bqkbnr/pppp1ppp/2n5/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 3';
     const blunderRec = record({
@@ -267,15 +267,26 @@ describe('ExplanationEngine.generateCard', () => {
       color: 'white',
     });
 
-    const card = ExplanationEngine.buildLocalCard(blunderRec, 'intermediaire');
-    expect(card.headline).toBe('Gaffe');
-    // La fiche mentionne le cavalier laissé en e5 et la punition Nxe5
-    const mistakeText = card.insights.find(i => i.kind === 'mistake')?.text ?? '';
-    expect(mistakeText).toContain('cavalier');
-    expect(mistakeText).toContain('e5');
-    const consequenceText = card.insights.find(i => i.kind === 'consequence')?.text ?? '';
-    expect(consequenceText).toContain('Nxe5');
-    const missedText = card.insights.find(i => i.kind === 'missed_move')?.text ?? '';
-    expect(missedText).toContain('Bb5');
+    const card = ExplanationEngine.buildLocalCard(blunderRec, 'debutant');
+
+    expect(card.headline).toBe('Grosse erreur');
+
+    // Consigne : 1 ou 2 constats max, phrases courtes.
+    expect(card.insights.length).toBeLessThanOrEqual(2);
+    for (const insight of card.insights) {
+      expect(insight.text.length).toBeLessThanOrEqual(120);
+    }
+
+    // Consigne : aucune notation brute (Nf3, Bb5, e2e4...).
+    const SAN = /\b[KQRBN][a-h]?[1-8]?x?[a-h][1-8]\b/;
+    const UCI = /\b[a-h][1-8][a-h][1-8]\b/;
+    const allText = [card.headline, card.takeaway, ...card.insights.map(i => i.text)].join(' ');
+    expect(allText).not.toMatch(SAN);
+    expect(allText).not.toMatch(UCI);
+
+    // La variante n'est plus racontée en texte : elle est montrée sur
+    // l'échiquier via le bouton « Montrer sur l''échiquier ».
+    expect(card.insights.some(i => i.kind === 'consequence')).toBe(false);
+    expect(card.takeaway.length).toBeGreaterThan(0);
   });
 });
