@@ -16,6 +16,13 @@ export type EngineEvaluation = {
   source?: EngineEvaluationSource;
   /** Nombre de nœuds quand disponible (cloud: knodes × 1000). */
   nodes?: number;
+  /**
+   * Position terminale détectée localement (sans moteur) :
+   * - `checkmate` : le camp au trait est maté → `cp = -1000` ;
+   * - `draw` : pat, matériel insuffisant, 50 coups ou triple répétition → `cp = 0`.
+   * Permet au pipeline de ne pas dépendre de `score mate 0` (inexistant en UCI).
+   */
+  terminal?: 'checkmate' | 'draw';
 };
 
 export type HeatmapData = {

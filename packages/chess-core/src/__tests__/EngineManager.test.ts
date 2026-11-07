@@ -131,10 +131,38 @@ describe('EngineManager', () => {
   });
 
   describe('analyse', () => {
-    it('envoie stop, position et go', () => {
+    it('envoie position + go quand le moteur est libre (sans barrière inutile)', () => {
       const { engine, worker } = setup();
       engine.analyze(FEN_START, 12);
-      expect(worker.sent).toEqual(['stop', `position fen ${FEN_START}`, 'go depth 12']);
+      expect(worker.sent).toEqual([`position fen ${FEN_START}`, 'go depth 12']);
+    });
+
+    it('barrière stop → isready → readyok → go si une recherche tourne', () => {
+      const { engine, worker, internals } = setup();
+
+      // Première analyse : moteur libre, envoi direct.
+      engine.analyze(FEN_START, 12);
+      expect(worker.sent).toEqual([`position fen ${FEN_START}`, 'go depth 12']);
+
+      // Seconde analyse alors que la première n'a pas rendu `bestmove`.
+      engine.analyze(FEN_OTHER, 12);
+      expect(worker.sent).toEqual([
+        `position fen ${FEN_START}`,
+        'go depth 12',
+        'stop',
+        'isready',
+      ]);
+
+      // Barrière franchie : le `go` de la seconde analyse part.
+      internals.handleMessage({ data: 'readyok' } as MessageEvent);
+      expect(worker.sent).toEqual([
+        `position fen ${FEN_START}`,
+        'go depth 12',
+        'stop',
+        'isready',
+        `position fen ${FEN_OTHER}`,
+        'go depth 12',
+      ]);
     });
 
     it('émet AnalysisStarted', () => {

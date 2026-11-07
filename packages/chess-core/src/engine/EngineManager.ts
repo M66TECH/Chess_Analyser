@@ -35,6 +35,23 @@ export class EngineManager {
    */
   private pendingThreat = false;
 
+  /** Historique associé à l'analyse mise en file avant `readyok`. */
+  private pendingHistory: { rootFen: string; moves: string[] } | null = null;
+
+  /**
+   * Recherche réellement en cours (un `go` a été envoyé, `bestmove` pas encore
+   * reçu). Sert de barrière `stop` → `isready` → `go` (cf. `startSearch`).
+   */
+  private searchInFlight = false;
+
+  /** Analyse demandée pendant qu'une recherche tourne ; envoyée après `readyok`. */
+  private pendingGo: {
+    fen: string;
+    depth: number;
+    history?: { rootFen: string; moves: string[] };
+    startedEvent: 'AnalysisStarted' | 'ThreatAnalysisStarted';
+  } | null = null;
+
   constructor(
     private eventBus: GameEventBus,
     private wasmPath: string = '/stockfish/stockfish.js'
@@ -80,6 +97,9 @@ export class EngineManager {
     this.worker = null;
     this.isReady = false;
     this.pendingFen = null;
+    this.pendingHistory = null;
+    this.pendingGo = null;
+    this.searchInFlight = false;
     this.currentAnalysisFen = null;
   }
 
@@ -92,6 +112,7 @@ export class EngineManager {
   /** Nouvelle partie : on vide la table de transposition. */
   public reinit() {
     if (!this.isReady) return;
+    this.pendingGo = null;
     this.send('stop');
     this.send('ucinewgame');
   }
@@ -153,22 +174,36 @@ export class EngineManager {
 
   private handleReadyOk() {
     this.isReady = true;
+
+    // Priorité 1 : une analyse attendait la fin de la précédente (barrière).
+    if (this.pendingGo) {
+      this.searchInFlight = false;
+      this.flushPendingGo();
+      return;
+    }
+
     const fen = this.pendingFen;
     if (fen === null) return;
 
     const depth = this.pendingDepth;
     const asThreat = this.pendingThreat;
+    const history = this.pendingHistory;
     this.pendingFen = null;
     this.pendingThreat = false;
+    this.pendingHistory = null;
 
     if (asThreat) {
       this.analyzeThreat(fen, depth);
     } else {
-      this.analyze(fen, depth);
+      this.analyze(fen, depth, history ?? undefined);
     }
   }
 
   private handleBestMove(msg: string) {
+    // La recherche en cours est terminée : la barrière peut laisser passer
+    // l'analyse suivante.
+    this.searchInFlight = false;
+
     const best = parseBestMove(msg);
     if (best) {
       this.eventBus.emit('BestMoveChanged', { move: best.bestMove });
@@ -176,6 +211,9 @@ export class EngineManager {
     // Le moteur a fini : le pipeline peut conclure même si la profondeur cible
     // n'a pas été atteinte (mat trouvé, moteur arrêté, profondeur maximale).
     this.eventBus.emit('AnalysisFinished', undefined as never);
+
+    // Une analyse a été demandée pendant celle-ci : on l'enchaîne proprement.
+    if (this.pendingGo) this.flushPendingGo();
   }
 
   private handleInfo(msg: string) {
@@ -214,6 +252,11 @@ export class EngineManager {
    * Stockfish reçoit `position fen <rootFen> moves ...` pour détecter les
    * répétitions de position (`ceval/ctrl.ts` de Lichess), tout en étiquetant
    * les évaluations avec `fen`.
+   *
+   * Fiabilité : `stop` est **suivi d'un `isready`**, et `go` n'est envoyé
+   * qu'après `readyok`. Sans cette barrière, Stockfish peut ignorer le `go`
+   * qui suit immédiatement un `stop` (la recherche précédente n'a pas encore
+   * rendu la main) — c'est exactement ce que fait `swapWork()` chez lila.
    */
   public analyze(
     fen: string,
@@ -226,21 +269,59 @@ export class EngineManager {
     if (!this.isReady || !this.worker) {
       this.pendingFen = fen;
       this.pendingDepth = depth;
+      this.pendingHistory = history ?? null;
       // Étiquette posée dès maintenant : une réponse tardive pour cette
       // position restera correctement attribuée.
       this.currentAnalysisFen = fen;
       return;
     }
 
+    this.startSearch(fen, depth, history, 'AnalysisStarted');
+  }
+
+  /**
+   * Envoie la séquence `stop` → `isready` (barrière) → `position` → `go`.
+   * `readyok` déclenche la suite via `pendingGo`.
+   */
+  private startSearch(
+    fen: string,
+    depth: number,
+    history: { rootFen: string; moves: string[] } | undefined,
+    startedEvent: 'AnalysisStarted' | 'ThreatAnalysisStarted'
+  ) {
     this.currentAnalysisFen = fen;
-    this.send('stop');
-    if (history && history.moves.length > 0) {
-      this.send(`position fen ${history.rootFen} moves ${history.moves.join(' ')}`);
-    } else {
-      this.send(`position fen ${fen}`);
+    this.pendingGo = { fen, depth, history, startedEvent };
+
+    if (this.searchInFlight) {
+      // Une recherche tourne : on l'arrête et on attend `readyok` avant `go`.
+      this.send('stop');
+      this.send('isready');
+      return;
     }
-    this.send(`go depth ${depth}`);
-    this.eventBus.emit('AnalysisStarted', undefined as never);
+
+    // Rien en cours : on peut enchaîner directement.
+    this.flushPendingGo();
+  }
+
+  /** Envoie réellement `position` + `go` pour la demande en attente. */
+  private flushPendingGo() {
+    const job = this.pendingGo;
+    if (!job || !this.worker) return;
+    this.pendingGo = null;
+
+    // Le mode doit être appliqué AU MOMENT de l'envoi : entre la demande et la
+    // barrière `readyok`, un autre appel a pu changer `isThreatMode`.
+    this.isThreatMode = job.startedEvent === 'ThreatAnalysisStarted';
+    this.currentAnalysisFen = job.fen;
+
+    if (job.history && job.history.moves.length > 0) {
+      this.send(`position fen ${job.history.rootFen} moves ${job.history.moves.join(' ')}`);
+    } else {
+      this.send(`position fen ${job.fen}`);
+    }
+    this.send(`go depth ${job.depth}`);
+    this.searchInFlight = true;
+    this.eventBus.emit(job.startedEvent, undefined as never);
   }
 
   /**
@@ -261,14 +342,11 @@ export class EngineManager {
       this.pendingFen = threatFen;
       this.pendingDepth = depth;
       this.pendingThreat = true;
+      this.pendingHistory = null;
       this.currentAnalysisFen = threatFen;
       return;
     }
 
-    this.currentAnalysisFen = threatFen;
-    this.send('stop');
-    this.send(`position fen ${threatFen}`);
-    this.send(`go depth ${depth}`);
-    this.eventBus.emit('ThreatAnalysisStarted', undefined as never);
+    this.startSearch(threatFen, depth, undefined, 'ThreatAnalysisStarted');
   }
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { COACH_MODELS } from '@chess-analyzer/chess-core';
+import { MAX_COACH_BODY_BYTES } from '../_validation';
 
 const RIVER_URL = 'https://api.river.ai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -46,9 +47,20 @@ function isValidMessages(value: unknown): value is Array<{ role: string; content
 }
 
 export async function POST(request: Request) {
+  // Borne la taille du corps AVANT de le lire : un client ne doit pas pouvoir
+  // faire parser puis relayer des mégaoctets vers le fournisseur LLM.
+  const declaredLength = Number(request.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_COACH_BODY_BYTES) {
+    return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+  }
+
   let body: CoachRequest;
   try {
-    body = (await request.json()) as CoachRequest;
+    const raw = await request.text();
+    if (raw.length > MAX_COACH_BODY_BYTES) {
+      return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+    }
+    body = JSON.parse(raw) as CoachRequest;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }

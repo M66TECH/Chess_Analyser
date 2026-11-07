@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
+import { validateFen } from '../_validation';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const fen = searchParams.get('fen');
-
-  if (!fen) {
-    return NextResponse.json({ error: 'FEN is required' }, { status: 400 });
+  const fenCheck = validateFen(searchParams.get('fen'));
+  if (!fenCheck.ok) {
+    return NextResponse.json({ error: fenCheck.error }, { status: 400 });
   }
+  const fen = fenCheck.fen!;
 
   const lichessUrl = `https://tablebase.lichess.ovh/standard?fen=${encodeURIComponent(fen)}`;
   // The tablebase currently answers 200 without a token, but sending one is

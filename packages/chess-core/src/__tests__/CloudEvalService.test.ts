@@ -151,6 +151,28 @@ describe('CloudEvalService', () => {
     expect(fetchSpy.mock.calls[0][0]).not.toContain(encodeURIComponent(WHITE_TO_MOVE));
   });
 
+  it('ne laisse jamais de promesse suspendue en navigation rapide A→B→A→B', async () => {
+    mockFetch([
+      { status: 200, body: hit(BLACK_TO_MOVE) },
+      { status: 200, body: hit(WHITE_TO_MOVE) },
+    ]);
+
+    const p1 = CloudEvalService.fetch(WHITE_TO_MOVE, 3, ORIGIN);
+    const p2 = CloudEvalService.fetch(BLACK_TO_MOVE, 3, ORIGIN);
+    const p3 = CloudEvalService.fetch(WHITE_TO_MOVE, 3, ORIGIN);
+    const p4 = CloudEvalService.fetch(BLACK_TO_MOVE, 3, ORIGIN);
+
+    await vi.runAllTimersAsync();
+
+    // Toutes les promesses doivent se régler (aucune ne pend indéfiniment).
+    const results = await Promise.all([p1, p2, p3, p4]);
+    for (const r of results) {
+      expect(r === null || Array.isArray(r)).toBe(true);
+    }
+    // La dernière demande est servie.
+    expect(results[3]?.[0].fen).toBe(BLACK_TO_MOVE);
+  });
+
   it('throttle : un second FEN part ≥700 ms après le premier envoi', async () => {
     const fetchSpy = mockFetch([
       { status: 200, body: hit(WHITE_TO_MOVE) },

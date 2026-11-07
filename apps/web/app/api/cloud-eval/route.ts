@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { validateFen, validateMultiPv } from '../_validation';
 
 /**
  * Proxy vers le Cloud Eval de Lichess (l'équivalent REST du websocket
@@ -14,14 +15,14 @@ const CLOUD_EVAL_URL = 'https://lichess.org/api/cloud-eval';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const fen = searchParams.get('fen');
-  const multiPv = searchParams.get('multiPv') || '3';
-
-  if (!fen) {
-    return NextResponse.json({ error: 'FEN is required' }, { status: 400 });
+  const fenCheck = validateFen(searchParams.get('fen'));
+  if (!fenCheck.ok) {
+    return NextResponse.json({ error: fenCheck.error }, { status: 400 });
   }
+  const fen = fenCheck.fen!;
+  const multiPv = String(validateMultiPv(searchParams.get('multiPv')));
 
-  const target = `${CLOUD_EVAL_URL}?fen=${encodeURIComponent(fen)}&multiPv=${encodeURIComponent(multiPv)}`;
+  const target = `${CLOUD_EVAL_URL}?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`;
 
   try {
     const res = await fetch(target, {

@@ -85,22 +85,37 @@ export class MoveManager {
    * Remonte jusqu'au dernier coup irréversible (coup de pion, prise ou roque,
    * où l'horloge des demi-coups `halfmoves` retombe à 0) pour permettre à
    * Stockfish de détecter les nulles par répétition (`ceval/ctrl.ts` de Lila).
+   *
+   * ⚠ Convention de la fenêtre : `halfmoves === 0` **après** le coup `i`
+   * signifie que le coup `i` est irréversible. La racine envoyée est donc la
+   * position **avant** ce coup (`path[i].fenBefore`), et la liste de coups
+   * commence **à** ce coup (`path.slice(i)`). Rejouer `path.slice(i + 1)`
+   * depuis `path[i].fenAfter` dupliquerait le coup et perdrait la position
+   * avant le coup — c'est ce que faisait la version précédente.
    */
   public getIrreversibleHistory(): { rootFen: string; moves: string[] } {
     const path = this.getCurrentPath();
     if (path.length === 0) {
       return { rootFen: this.initialFen, moves: [] };
     }
-    let startIdx = 0;
+
+    // Dernier coup irréversible de la branche (le plus récent).
+    let lastIrreversible = -1;
     for (let i = path.length - 1; i >= 0; i--) {
       const halfmoves = parseInt(path[i].fenAfter.split(' ')[4] ?? '0', 10);
       if (halfmoves === 0) {
-        startIdx = i;
+        lastIrreversible = i;
         break;
       }
     }
-    const rootFen = startIdx === 0 ? this.initialFen : path[startIdx].fenAfter;
-    const moves = startIdx === 0 ? path.map(n => n.uci) : path.slice(startIdx + 1).map(n => n.uci);
+
+    if (lastIrreversible === -1) {
+      // Aucun coup irréversible : toute la branche depuis la position initiale.
+      return { rootFen: this.initialFen, moves: path.map(n => n.uci) };
+    }
+
+    const rootFen = path[lastIrreversible].fenBefore;
+    const moves = path.slice(lastIrreversible).map(n => n.uci);
     return { rootFen, moves };
   }
 

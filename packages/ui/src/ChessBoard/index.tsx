@@ -45,9 +45,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   const turn: Color = fen.split(' ')[1] === 'w' ? 'white' : 'black';
   const effectiveOrientation: 'white' | 'black' = orientation ?? turn;
-  const lastMoveKeys: Key[] | undefined = lastMove
-    ? [lastMove[0] as Key, lastMove[1] as Key]
-    : undefined;
+  // Tableau mémorisé : `lastMove` est recréé à chaque rendu sinon, et
+  // chessground reçoit une nouvelle prop (animation/re-render inutiles).
+  const lastMoveKeys: Key[] | undefined = useMemo(
+    () => (lastMove ? [lastMove[0] as Key, lastMove[1] as Key] : undefined),
+    [lastMove]
+  );
   const drawShapes: DrawShape[] = useMemo(
     () =>
       shapes.map(s => ({

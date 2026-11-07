@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { validateFen, validateMoveCount } from '../_validation';
 
 // Server-only secret: never use NEXT_PUBLIC_* here, it would ship the token to
 // every visitor.
@@ -15,12 +16,12 @@ const LICHESS_EXPLORER_URL =
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const fen = searchParams.get('fen');
-  const moves = searchParams.get('moves') || '12';
-
-  if (!fen) {
-    return NextResponse.json({ error: 'FEN is required' }, { status: 400 });
+  const fenCheck = validateFen(searchParams.get('fen'));
+  if (!fenCheck.ok) {
+    return NextResponse.json({ error: fenCheck.error }, { status: 400 });
   }
+  const fen = fenCheck.fen!;
+  const moves = String(validateMoveCount(searchParams.get('moves')));
 
   const token = process.env.LICHESS_TOKEN?.trim() || null;
   if (!token) {

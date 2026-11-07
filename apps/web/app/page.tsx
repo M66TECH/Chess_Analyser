@@ -58,6 +58,17 @@ export default function Home() {
   }, []);
 
   // --- Persistence: save/restore game to localStorage ---
+  /**
+   * Sauvegarde la partie. `localStorage` plafonne autour de 5 Mo : on ne
+   * persiste donc PAS les fiches complètes (`coachCard`, PV, explications)
+   * qui peuvent peser plusieurs centaines de Ko sur une longue partie, mais
+   * uniquement les données nécessaires à la reconstruction et à l'affichage
+   * des verdicts. Les fiches coach sont régénérées à la demande.
+   *
+   * En cas de dépassement de quota, on retente sans les records avant
+   * d'abandonner — sinon un `setItem` qui throw laissait croire à une
+   * sauvegarde réussie alors que rien n'était écrit.
+   */
   const saveGame = useCallback(() => {
     const gm = gmRef.current;
     if (!gm) return;
@@ -66,17 +77,35 @@ export default function Home() {
       try { localStorage.removeItem(STORAGE_KEY); } catch {}
       return;
     }
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          moves: uciMoves,
-          records: gm.getMoveRecords(),
-          initialFen: gm.moveManager.getInitialFen(),
-          ts: Date.now(),
-        })
-      );
-    } catch {}
+
+    const initialFen = gm.moveManager.getInitialFen();
+    const records = gm.getMoveRecords();
+
+    // Version allégée : on garde ce qui permet d'afficher les verdicts sans
+    // rejouer l'analyse, mais on retire les gros champs texte.
+    const slimRecords = records.map(r => ({
+      ...r,
+      coachCard: undefined,
+      explanation: undefined,
+      // Les PV complètes peuvent être longues ; le coup clé suffit.
+      bestPv: undefined,
+      refutationPv: undefined,
+    }));
+
+    const attempts: string[] = [
+      JSON.stringify({ moves: uciMoves, records: slimRecords, initialFen, ts: Date.now() }),
+      // Dernier recours : sans aucun record (la partie est rejouée/analysée).
+      JSON.stringify({ moves: uciMoves, initialFen, ts: Date.now() }),
+    ];
+
+    for (const payload of attempts) {
+      try {
+        localStorage.setItem(STORAGE_KEY, payload);
+        return;
+      } catch {
+        // QuotaExceededError : on tente la version suivante, plus légère.
+      }
+    }
   }, []);
 
   const restoreGame = useCallback(() => {

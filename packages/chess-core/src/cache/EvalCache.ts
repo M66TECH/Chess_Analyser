@@ -1,6 +1,19 @@
 import { EngineEvaluation } from '../events/GameEventBus';
 
 export class EvalCache {
+  /**
+   * Version du schéma de stockage. À incrémenter dès qu'une convention
+   * d'évaluation change (ex. normalisation du POV) : les entrées d'une autre
+   * version sont considérées invalides et purgées, sinon des scores faux
+   * réapparaîtraient après une mise à jour du code.
+   *
+   * Historique :
+   * - v1 : `normalize()` ne retournait le POV Blanc que pour les mats, le cp
+   *        restait en POV trait → toutes les entrées des coups Noirs sont
+   *        fausses.
+   * - v2 : cp et mat normalisés en POV Blanc de façon uniforme.
+   */
+  private readonly schemaVersion = 2;
   private readonly dbName = 'ChessAnalyzerEvalDB';
   private readonly storeName = 'evals';
   private dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -52,11 +65,13 @@ export class EvalCache {
    * Normalizes a FEN by removing the fullmove counter only, so that functionally
    * identical positions share the same cache entry. The halfmove counter is kept
    * to avoid conflating positions that differ by the 50-move rule (3-fold, etc.).
+   * Le préfixe de version invalide automatiquement les entrées d'un ancien
+   * schéma (voir `schemaVersion`).
    */
   public normalizeFen(fen: string): string {
     const parts = fen.split(' ');
     // Keep pieces, turn, castling, en passant and halfmove clock (first 5 parts)
-    return parts.slice(0, 5).join(' ');
+    return `v${this.schemaVersion}|${parts.slice(0, 5).join(' ')}`;
   }
 
   public async get(fen: string): Promise<EngineEvaluation | undefined> {

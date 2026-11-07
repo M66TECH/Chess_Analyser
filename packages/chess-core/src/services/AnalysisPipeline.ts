@@ -39,6 +39,12 @@ export class AnalysisPipeline {
   private pedagogyDone = false;
   private warmFen: string | null = null;
   private readonly targetDepth = 14;
+  /**
+   * Identifiant d'import : incrémenté à chaque `analyzeGame` ET à chaque
+   * `reset()`/`resetPending()`, ce qui annule proprement un import en cours
+   * (sinon deux imports concurrents s'écrasent mutuellement).
+   */
+  private importRunId = 0;
 
   constructor(
     private eventBus: GameEventBus,
@@ -52,19 +58,29 @@ export class AnalysisPipeline {
    * Détecte si `fen` est une position terminale (échec et mat, pat, matériel
    * insuffisant, règle des 50 coups ou triple répétition) afin de fournir une
    * évaluation exacte immédiate sans dépendre de `score mate 0` / `bestmove (none)`.
+   *
+   * ⚠ Convention : `cp` et `mate` sont en **POV du camp au trait** (convention
+   * UCI du reste du moteur). Un mat signifie que le camp au trait est MATÉ :
+   * l'évaluation est donc « infiniment perdante pour lui » → `cp: -1000`.
+   * Le champ `mate` reste `undefined` : `mate: 0` n'existe pas dans le
+   * protocole UCI (Stockfish l'omet), et `winPercentFromScore({mate: 0})`
+   * donnerait un signe arbitraire. `terminal` sert à distinguer ce cas de
+   * l'absence d'évaluation.
    */
   private getTerminalEvaluation(fen: string): EngineEvaluation | null {
     try {
       const setup = parseFen(fen).unwrap();
       const pos = Chess.fromSetup(setup).unwrap();
       if (pos.isCheckmate()) {
+        // Le camp au trait n'a plus de coup légal et est en échec : il est mat.
         return {
           fen,
           depth: this.targetDepth,
           cp: -1000,
-          mate: 0,
           pv: [],
           multiPv: 1,
+          source: 'local',
+          terminal: 'checkmate',
         };
       }
       if (
@@ -79,6 +95,8 @@ export class AnalysisPipeline {
           cp: 0,
           pv: [],
           multiPv: 1,
+          source: 'local',
+          terminal: 'draw',
         };
       }
     } catch {
@@ -149,7 +167,14 @@ export class AnalysisPipeline {
         return;
       }
 
-      this.engineManager.analyze(fenAfter, this.targetDepth);
+      // Historique depuis le dernier coup irréversible : Stockfish reçoit
+      // `position fen <root> moves …` et peut alors détecter les nulles par
+      // répétition, comme `ceval/ctrl.ts` de lila.
+      this.engineManager.analyze(
+        fenAfter,
+        this.targetDepth,
+        this.moveManager.getIrreversibleHistory()
+      );
     });
 
     // Race navigation/analyse : invalider toute analyse en cours
@@ -264,8 +289,26 @@ export class AnalysisPipeline {
     };
   }
 
-  private syncMoveRecordsWithTree() {
-    const history = this.moveManager.getHistory();
+  /**
+   * Convertit une évaluation (POV du camp au trait APRÈS le coup = l'adversaire)
+   * en score POV du joueur qui a bougé, pour le jugement `Advice.scala`.
+   *
+   * Cas particulier du mat détecté localement (`terminal: 'checkmate'`) : le
+   * camp au trait est maté, donc du point de vue du joueur qui vient de jouer
+   * c'est un mat **pour lui** → `mate: +1` (n'importe quelle valeur positive
+   * suffit à `MateSequence`, qui ne regarde que le signe).
+   */
+  private toMoverPovScore(evalAfter: EngineEvaluation): { cp?: number; mate?: number } {
+    if (evalAfter.terminal === 'checkmate') {
+      return { mate: 1 };
+    }
+    return {
+      cp: evalAfter.cp === undefined ? undefined : -evalAfter.cp,
+      mate: evalAfter.mate === undefined ? undefined : -evalAfter.mate,
+    };
+  }
+
+  private syncMoveRecordsWithTree() {    const history = this.moveManager.getHistory();
     if (history.length > 0) {
       const synced: MoveRecord[] = [];
       for (const node of history) {
@@ -285,17 +328,16 @@ export class AnalysisPipeline {
     // fall back to a neutral record instead of inventing an accuracy (E1).
     const evalBefore = this.evalBeforeMove;
     const sideToMoveAfter: 'white' | 'black' = color === 'white' ? 'black' : 'white';
-    const isCheckmateMove = evalAfter.mate === 0 && evalAfter.cp === -1000;
+    const isCheckmateMove = evalAfter.terminal === 'checkmate';
 
-    // 1. Normalize scores (White's POV), accounting for the side to move (mate sign)
+    // 1. Normalize scores (White's POV), accounting for the side to move (mate sign).
+    // Un mat détecté localement est une évaluation en POV trait (le camp au
+    // trait est maté) : `normalize(-1000, undefined, trait)` donne déjà
+    // -1000 si le trait est aux Blancs, +1000 s'il est aux Noirs.
     const normCpBefore = evalBefore
       ? EvalNormalizer.normalize(evalBefore.cp, evalBefore.mate, color)
-      : isCheckmateMove
-        ? color === 'white' ? 1000 : -1000
-        : EvalNormalizer.normalize(evalAfter.cp, evalAfter.mate, sideToMoveAfter);
-    const normCpAfter = isCheckmateMove
-      ? color === 'white' ? 1000 : -1000
-      : EvalNormalizer.normalize(evalAfter.cp, evalAfter.mate, sideToMoveAfter);
+      : EvalNormalizer.normalize(evalAfter.cp, undefined, sideToMoveAfter);
+    const normCpAfter = EvalNormalizer.normalize(evalAfter.cp, undefined, sideToMoveAfter);
 
     // 2. Winning chances dropped by the player (positive = lost chances)
     const winDrop = evalBefore
@@ -334,10 +376,7 @@ export class AnalysisPipeline {
     const prevScore = evalBefore
       ? { cp: evalBefore.cp, mate: evalBefore.mate }
       : undefined;
-    const nextScore = {
-      cp: evalAfter.cp === undefined ? undefined : -evalAfter.cp,
-      mate: evalAfter.mate === undefined ? undefined : evalAfter.mate === 0 ? 1 : -evalAfter.mate,
-    };
+    const nextScore = this.toMoverPovScore(evalAfter);
 
     // 3. Classification (jugement Lichess d'abord, barème interne ensuite)
     const { classification, accuracy, mateSequence } = MoveClassifier.classify(winDrop, {
@@ -439,8 +478,21 @@ export class AnalysisPipeline {
    * Replays a PGN (nodes in mainline order) through the full analysis pipeline:
    * engine evaluation of every position + pedagogy. Sequential, awaiting the
    * target depth for each position before moving to the next.
+   *
+   * Fiabilité :
+   * - `cancelRequested` permet d'abandonner un import en cours (nouvelle
+   *   partie, nouvel import) : sans ça, deux imports concurrents écrasent
+   *   mutuellement `pendingMove` et le second attend 30 s par position.
+   * - Le timeout par position est plus court que la valeur par défaut
+   *   d'`awaitEval` : un import de 80 coups ne peut pas bloquer 40 minutes si
+   *   le moteur est lent. Les positions non conclues sont laissées de côté
+   *   plutôt que d'immobiliser la file.
    */
-  public async analyzeGame(nodes: MoveNode[]): Promise<void> {
+  public async analyzeGame(nodes: MoveNode[], opts: { perMoveTimeoutMs?: number } = {}): Promise<void> {
+    const perMoveTimeout = opts.perMoveTimeoutMs ?? 12_000;
+    const runId = ++this.importRunId;
+    const isCancelled = () => runId !== this.importRunId;
+
     this.pendingMove = null;
     this.pedagogyDone = false;
     this.warmFen = null;
@@ -450,18 +502,24 @@ export class AnalysisPipeline {
     if (nodes.length === 0) return;
 
     for (const node of nodes) {
+      if (isCancelled()) return;
+
       // The pre-move evaluation is either the one cached for fenBefore or, for the
       // very first move, the one we compute right now. Never fabricate {cp: 0}.
       const evalBefore =
-        (await this.evalCache.get(node.fenBefore)) ?? (await this.awaitEval(node.fenBefore));
+        (await this.evalCache.get(node.fenBefore)) ??
+        (await this.awaitEval(node.fenBefore, this.targetDepth, perMoveTimeout));
+      if (isCancelled()) return;
       if (!evalBefore) continue;
       this.evalCache.set(node.fenBefore, evalBefore);
 
-      const evalAfter = await this.awaitEval(node.fenAfter);
+      const evalAfter = await this.awaitEval(node.fenAfter, this.targetDepth, perMoveTimeout);
+      if (isCancelled()) return;
       if (!evalAfter) continue;
 
       // Opening database lookup for this position (human theory).
       const { data, opening } = await OpeningExplorer.fetchWithOpening(node.fenBefore);
+      if (isCancelled()) return;
       if (opening) {
         this.eventBus.emit('OpeningDetected', { eco: opening.eco, name: opening.name });
       }
@@ -564,6 +622,8 @@ export class AnalysisPipeline {
    * to the wrong move.
    */
   public resetPending() {
+    // Invalide tout import PGN en cours (voir analyzeGame / importRunId).
+    this.importRunId++;
     this.pendingMove = null;
     this.evalBeforeMove = null;
     this.latestEval = null;
