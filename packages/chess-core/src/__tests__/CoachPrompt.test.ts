@@ -104,7 +104,7 @@ describe('Prompt de démonstration', () => {
     expect(prompt).toContain(`POSITION DE DÉPART : ${fen}`);
     expect(prompt).toContain('exactement 3 phrases');
     expect(prompt).toMatch(/Ne rejoue PAS les coups toi-même/i);
-    expect(prompt).toMatch(/12 mots maximum/);
+    expect(prompt).toMatch(/30 mots maximum/);
     expect(prompt).toMatch(/AUCUNE notation/i);
   });
 
@@ -222,9 +222,9 @@ describe('Brièveté garantie en sortie (pas seulement demandée)', () => {
     const card = await ExplanationEngine.generateCard(record({ classification: 'best' }));
 
     expect(card.insights).toHaveLength(1);
-    expect(card.headline.split(/\s+/).length).toBeLessThanOrEqual(9);
-    expect(card.insights[0].text.split(/\s+/).length).toBeLessThanOrEqual(17);
-    expect(card.takeaway.split(/\s+/).length).toBeLessThanOrEqual(13);
+    expect(card.headline.split(/\s+/).length).toBeLessThanOrEqual(13);
+    expect(card.insights[0].text.split(/\s+/).length).toBeLessThanOrEqual(31);
+    expect(card.takeaway.split(/\s+/).length).toBeLessThanOrEqual(31);
   });
 
   it('laisse une réponse déjà courte intacte', async () => {
@@ -234,5 +234,28 @@ describe('Brièveté garantie en sortie (pas seulement demandée)', () => {
     const card = await ExplanationEngine.generateCard(record({ classification: 'brilliant' }));
     expect(card.headline).toBe('Bravo !');
     expect(card.insights[0].text).toBe('Le cavalier va en f3.');
+  });
+});describe('Registre de langue imposé', () => {
+  let prompt = '';
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(RiverAPI, 'complete').mockImplementation(async (p: string) => {
+      prompt = p;
+      return '{"headline":"X","insights":[],"takeaway":"Y"}';
+    });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('impose le français exclusif et le vouvoiement', async () => {
+    await ExplanationEngine.generateCard(record());
+    expect(prompt).toMatch(/EXCLUSIVEMENT en français/i);
+    expect(prompt).toMatch(/Vouvoie/i);
+    expect(prompt).toMatch(/jamais « tu »/i);
+  });
+
+  it('impose le vouvoiement aussi dans la démonstration', () => {
+    const p = ExplanationEngine.buildDemoPrompt('8/8/8/8/8/8/8/8 w - - 0 1', ['e2e4'], 'idea');
+    expect(p).toMatch(/Vouvoie/i);
+    expect(p).toMatch(/EXCLUSIVEMENT en français/i);
   });
 });

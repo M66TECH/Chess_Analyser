@@ -166,7 +166,7 @@ describe('ExplanationEngine.fallbackCard', () => {
   it('explique un coup correct sans le présenter comme une erreur', () => {
     const ctx = buildExplanationContext({ record: record(), playedPiece: 'pion' });
     const card = ExplanationEngine.fallbackCard(ctx, 'intermediaire');
-    expect(card.headline).toBe('Bon coup');
+    expect(card.headline).toBe('Le meilleur coup');
     expect(card.insights.some(i => i.kind === 'played_move')).toBe(true);
     expect(card.insights.some(i => i.kind === 'mistake')).toBe(false);
     expect(card.takeaway.length).toBeGreaterThan(0);
@@ -187,7 +187,7 @@ describe('ExplanationEngine.fallbackCard', () => {
       playedPiece: 'cavalier',
     });
     const card = ExplanationEngine.fallbackCard(ctx, 'debutant');
-    expect(card.headline).toBe('Grosse erreur');
+    expect(card.headline).toBe('Pas de panique');
     expect(card.insights.some(i => i.kind === 'mistake')).toBe(true);
     expect(card.insights.some(i => i.kind === 'missed_move')).toBe(true);
     expect(card.insights.find(i => i.kind === 'missed_move')?.text).toContain('e4');
@@ -225,14 +225,14 @@ describe('ExplanationEngine.generateCard', () => {
   it('retombe sur une explication locale si le modèle échoue', async () => {
     vi.spyOn(RiverAPI, 'complete').mockRejectedValue(new Error('network down'));
     const card = await ExplanationEngine.generateCard(record({ classification: 'blunder', cpAfter: -300 }));
-    expect(card.headline).toBe('Grosse erreur');
+    expect(card.headline).toBe('Pas de panique');
     expect(card.insights.length).toBeGreaterThan(0);
   });
 
   it('retombe sur l\'explication locale si le modèle renvoie du vide', async () => {
     vi.spyOn(RiverAPI, 'complete').mockResolvedValue('');
     const card = await ExplanationEngine.generateCard(record());
-    expect(card.headline).toBe('Bon coup');
+    expect(card.headline).toBe('Le meilleur coup');
   });
 
   it('n\'envoie au modèle que des faits issus de l\'analyse', async () => {
@@ -269,7 +269,7 @@ describe('ExplanationEngine.generateCard', () => {
 
     const card = ExplanationEngine.buildLocalCard(blunderRec, 'debutant');
 
-    expect(card.headline).toBe('Grosse erreur');
+    expect(card.headline).toBe('Pas de panique');
 
     // Consigne : 1 ou 2 constats max, phrases courtes.
     expect(card.insights.length).toBeLessThanOrEqual(2);

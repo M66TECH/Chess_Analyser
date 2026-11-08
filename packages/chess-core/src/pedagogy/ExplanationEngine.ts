@@ -217,6 +217,11 @@ Si opening.is_theory_move est vrai, ne présente pas le coup comme une erreur.
 # Séquences de mat
 - created : « le mat devient inévitable ». lost : « vous aviez un mat et il est perdu ». delayed : pas une erreur.
 
+# Langue
+Réponds EXCLUSIVEMENT en français : aucun mot anglais dans les textes.
+Adresse-toi au joueur en VOUVOYANT (« vous », « votre ») : jamais « tu » ni « ton ».
+Les CLÉS du JSON restent en anglais pour la machine (headline, insights, kind, text, takeaway) — c'est le seul anglais autorisé.
+
 # Format
 Réponds UNIQUEMENT par un objet JSON valide :
 {"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
@@ -236,10 +241,15 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
         maxTokens: 900,
       });
       const parsed = this.parseCard(raw);
-      if (parsed) {
+      if (parsed && isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
         // Le prompt demande la brièveté ; le code la GARANTIT (un modèle peut
         // dépasser). Mêmes bornes que le fallback local.
         return applyMoodLimits({ ...parsed, level }, context);
+      }
+
+      if (parsed && !isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
+        // Réponse dans une autre langue : on ne la montre pas telle quelle.
+        console.error('[ExplanationEngine] Non-French answer discarded, using local card.');
       }
     } catch (error) {
       console.error('[ExplanationEngine] Falling back to local explanation:', error);
@@ -332,6 +342,10 @@ ${mood.tone}
 - takeaway : une seule phrase de ${mood.maxTakeawayWords} mots maximum.
 - Si tu ne tiens pas dans ces limites, écris moins, pas plus long.
 
+# Langue et adresse
+- Réponds EXCLUSIVEMENT en français : aucun mot anglais.
+- Vouvoie le joueur (« vous », « votre »), jamais « tu » ni « ton ».
+
 # Interdits absolus
 - Ne rejoue PAS les coups toi-même : l'application affiche la démonstration sur l'échiquier.
 - N'écris aucune notation : ni « Nf3 », ni « e2e4 », ni « Bxc5 ».
@@ -364,7 +378,9 @@ ${JSON.stringify(context, null, 2)}
     return `${mood}
 
 # Consignes (strictes)
-- Explique brièvement la séquence suivante, coup par coup, en une phrase TRÈS courte chacun (12 mots maximum).
+- Explique brièvement la séquence suivante, coup par coup, en une phrase courte chacun (30 mots maximum, limite absolue).
+- Réponds EXCLUSIVEMENT en français : aucun mot anglais dans les phrases.
+- Vouvoie le joueur (« vous »), jamais « tu ».
 - Ne rejoue PAS les coups toi-même : l'application s'en charge.
 - Ne dépasse pas la longueur fournie : exactement ${count} phrases, une par coup, dans l'ordre.
 - Nomme la pièce en français et sa case d'arrivée (« le cavalier va en f3 »).
@@ -467,93 +483,246 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
   }
 
   /**
-   * Explication déterministe, COURTE et sans notation (ni « Nf3 » ni « e2e4 »).
-   * Sert de secours quand le modèle est indisponible et lors des imports PGN.
+   * Explication déterministe, COURTE, sans notation, en français, avec le même
+   * ton que le modèle. Objectif : **indiscernable** du rendu LLM.
    *
-   * Structure imposée : un constat (le problème), une action (quoi faire), et
-   * un seul conseil final. Les variantes ne sont pas racontées en texte : elles
-   * sont montrées sur l'échiquier (`buildDemo`), comme demandé.
+   * Couverture exhaustive des cas :
+   *  - livraison d'un mat (mat joué) ;
+   *  - séquences de mat subi / perdu / prolongé ;
+   *  - 9 classifications : book, brilliant, great, best, excellent, good,
+   *    inaccuracy, mistake, blunder ;
+   *  - avec ou sans meilleur coup, avec ou sans faits tactiques vérifiés
+   *    (pièce en prise, clouage, pion doublé), avec ou sans capture.
+   *
+   * Rien n'est inventé : chaque phrase s'appuie sur `verdict`, `best`,
+   * `tactical_facts` ou la description de `MoveNarrator`.
    */
   public static fallbackCard(context: ExplanationContext, level: PlayerLevel): CoachCard {
-    const { played, best, verdict, context: moveCtx, tactical_facts: facts } = context;
+    const { played, best, verdict, context: moveCtx } = context;
+    const classification = verdict.classification;
+
+    const playedDesc = describeMove(context.fen_before, played.uci);
+    const playedText = playedDesc ? playedDesc.text : describePlayedFromContext(played);
+
+    const bestDesc = best?.uci ? describeMove(context.fen_before, best.uci) : null;
+    const bestAction = bestDesc
+      ? `Le bon coup était : ${lowerFirst(bestDesc.text)}`
+      : 'Cherchez un coup qui garde vos pièces protégées.';
 
     const isError =
-      verdict.classification === 'inaccuracy' ||
-      verdict.classification === 'mistake' ||
-      verdict.classification === 'blunder';
-
-    // Description du coup joué en français simple (jamais la notation seule).
-    const playedDesc = describeMove(context.fen_before, played.uci);
-    const playedText = playedDesc
-      ? playedDesc.text
-      : describePlayedFromContext(played);
-
-    // Le meilleur coup, décrit pareil (pièce + case).
-    const bestDesc = best?.uci ? describeMove(context.fen_before, best.uci) : null;
+      classification === 'inaccuracy' || classification === 'mistake' || classification === 'blunder';
 
     const insights: Insight[] = [];
 
-    if (isError) {
-      // 1. Le problème, en une phrase.
-      if (moveCtx.mate_sequence === 'created') {
-        insights.push({ kind: 'mistake', text: 'Votre roi va se faire mater.' });
-      } else if (moveCtx.mate_sequence === 'lost') {
-        insights.push({ kind: 'mistake', text: 'Vous laissez filer un mat gagnant.' });
-      } else if (facts && facts.newly_undefended_own_pieces.length > 0) {
-        const hanging = facts.newly_undefended_own_pieces[0];
-        insights.push({
-          kind: 'mistake',
-          text: `Votre ${hanging.piece} en ${hanging.square} peut être prise.`,
-        });
-      } else if (facts && facts.new_pins_against_player.length > 0) {
-        const pin = facts.new_pins_against_player[0];
-        insights.push({
-          kind: 'mistake',
-          text: `Votre ${pin.pinned_piece} ne peut plus bouger sans perdre du matériel.`,
-        });
-      } else {
-        insights.push({
-          kind: 'mistake',
-          text: 'Ce coup affaiblit votre position.',
-        });
-      }
-
-      // 2. L'action recommandée, en une phrase.
-      insights.push({
-        kind: 'missed_move',
-        text: bestDesc ? `Jouez plutôt : ${lowerFirst(bestDesc.text)}` : 'Cherchez un coup qui protège vos pièces.',
-      });
-    } else {
-      insights.push({ kind: 'played_move', text: playedText });
-      insights.push({
-        kind: 'good_decision',
-        text: 'C’est un bon coup : vous ne perdez rien.',
-      });
+    // ---- 1. Mat livré (le joueur vient de mater) ---------------------------
+    if (played.is_mate) {
+      return applyMoodLimits({
+        headline: 'Échec et mat !',
+        insights: [{ kind: 'played_move', text: playedText.replace(' Le roi est en échec.', '') }],
+        takeaway: 'Bravo, la partie est gagnée.',
+        level,
+      }, context);
     }
 
-    // Un seul conseil final, très court.
-    let takeaway: string;
+    // ---- 2. Séquences de mat ------------------------------------------------
     if (moveCtx.mate_sequence === 'created') {
-      takeaway = 'Avant de jouer, vérifiez ce que l’adversaire peut faire contre votre roi.';
-    } else if (isError) {
-      takeaway = 'Vérifiez toujours si vos pièces sont protégées après votre coup.';
-    } else if (bestDesc) {
-      takeaway = 'Continuez à protéger vos pièces.';
-    } else {
-      takeaway = 'Vous progressez : la position reste saine.';
+      return applyMoodLimits({
+        headline: 'Attention : le mat menace',
+        insights: [
+          { kind: 'mistake', text: 'Votre roi va se faire mater.' },
+          { kind: 'missed_move', text: bestAction },
+        ],
+        takeaway: 'Protégez votre roi avant de penser aux pièces.',
+        level,
+      }, context);
     }
 
-    // Mêmes bornes que la carte issue du modèle (une seule source de vérité).
+    if (moveCtx.mate_sequence === 'lost') {
+      return applyMoodLimits({
+        headline: 'Vous aviez un mat',
+        insights: [
+          { kind: 'mistake', text: 'Ce coup laisse filer une victoire déjà prête.' },
+          { kind: 'missed_move', text: bestAction },
+        ],
+        takeaway: 'Avant de jouer, vérifiez si vous pouvez mater tout de suite.',
+        level,
+      }, context);
+    }
+
+    if (moveCtx.mate_sequence === 'delayed') {
+      return applyMoodLimits({
+        headline: 'Le mat est encore là',
+        insights: [{ kind: 'played_move', text: playedText }],
+        takeaway: 'Tout va bien : le mat reste forcé, il arrive juste un peu plus tard.',
+        level,
+      }, context);
+    }
+
+    // ---- 3. Erreurs : problème prouvé, puis action -------------------------
+    if (isError) {
+      insights.push({ kind: 'mistake', text: describeProblem(context) });
+      insights.push({ kind: 'missed_move', text: bestAction });
+
+      return applyMoodLimits({
+        headline: headlineFor(classification),
+        insights,
+        takeaway: takeawayFor(classification),
+        level,
+      }, context);
+    }
+
+    // ---- 4. Coups bons : valoriser ce qui est vérifiable -------------------
+    insights.push({ kind: 'played_move', text: playedText });
+    insights.push({ kind: 'good_decision', text: describeGood(context) });
+
     return applyMoodLimits({
-      headline: isError ? labelCourt(verdict.classification) : 'Bon coup',
+      headline: headlineFor(classification),
       insights,
-      takeaway,
+      takeaway: takeawayFor(classification),
       level,
     }, context);
   }
 }
 
+/**
+ * Détecte une réponse majoritairement anglaise.
+ *
+ * Le prompt impose le français, mais un modèle peut dériver. On compare les
+ * mots vides anglais et français : si l'anglais domine, la carte est écartée
+ * au profit du fallback déterministe (français garanti).
+ */
+export function isFrenchText(text: string): boolean {
+  const lower = text.toLowerCase();
+
+  const frenchHits = (lower.match(
+    /\b(le|la|les|des|une|un|et|est|vous|votre|vos|ce|cette|pour|avec|sur|dans|plus|pas|qui|que|au|aux|du|de|en|il|elle|on|ne|se|son|sa|ses|peut|être|avoir|bon|coup|pièce|roi|dame|tour|fou|cavalier|pion)\b/g
+  ) ?? []).length;
+
+  const englishHits = (lower.match(
+    /\b(the|and|is|are|you|your|this|that|with|for|from|move|good|best|knight|bishop|rook|queen|pawn|king|capture|because|should|could|would|attack|defend|threat|position|game)\b/g
+  ) ?? []).length;
+
+  // Aucun marqueur d'aucune langue (phrase nominale) : on accepte.
+  if (frenchHits === 0 && englishHits === 0) return true;
+
+  return frenchHits >= englishHits;
+}
+
 // --- aides locales ----------------------------------------------------------
+
+/** Titre selon le verdict, dans le registre émotionnel du cas. */
+function headlineFor(classification: string): string {
+  switch (classification) {
+    case 'brilliant':
+      return 'Bravo !';
+    case 'great':
+      return 'Très bon coup !';
+    case 'best':
+      return 'Le meilleur coup';
+    case 'excellent':
+      return 'Excellent choix';
+    case 'book':
+      return 'Ouverture connue';
+    case 'good':
+      return 'Bon coup';
+    case 'inaccuracy':
+      return 'Petite imprécision';
+    case 'mistake':
+      return 'Erreur';
+    case 'blunder':
+      return 'Pas de panique';
+    default:
+      return 'Coup joué';
+  }
+}
+
+/** Conseil final, propre au cas. */
+function takeawayFor(classification: string): string {
+  switch (classification) {
+    case 'brilliant':
+      return 'Vous avez trouvé une très bonne idée, continuez à chercher ce genre de coup.';
+    case 'great':
+      return 'Vous jouez bien : gardez ce reflexe de chercher les coups actifs.';
+    case 'best':
+      return 'Continuez comme ça, vous ne laissez rien à l’adversaire.';
+    case 'excellent':
+      return 'Bonne décision, la position reste saine.';
+    case 'book':
+      return 'C’est une ouverture classique : vous êtes sur une bonne route.';
+    case 'good':
+      return 'Rien à corriger ici, votre position reste solide.';
+    case 'inaccuracy':
+      return 'Avant de jouer, vérifiez les prises possibles des deux camps.';
+    case 'mistake':
+      return 'Avant de jouer, regardez ce que l’adversaire menace sur votre camp.';
+    case 'blunder':
+      return 'Pas de panique : prenez le temps de vérifier les prises avant chaque coup.';
+    default:
+      return 'Continuez à vérifier vos pièces avant de jouer.';
+  }
+}
+
+/**
+ * Décrit le PROBLÈME de façon prouvée, par ordre de certitude :
+ * pièce en prise → clouage → pion doublé → perte de matériel dans la variante
+ * → perte d'évaluation. Jamais d'invention.
+ */
+function describeProblem(context: ExplanationContext): string {
+  const { verdict, evaluation, tactical_facts: facts } = context;
+
+  if (facts && facts.newly_undefended_own_pieces.length > 0) {
+    const p = facts.newly_undefended_own_pieces[0];
+    return `Votre ${p.piece} en ${p.square} peut être prise.`;
+  }
+
+  if (facts && facts.new_pins_against_player.length > 0) {
+    const pin = facts.new_pins_against_player[0];
+    return `Votre ${pin.pinned_piece} ne peut plus bouger sans perdre du matériel.`;
+  }
+
+  if (facts && facts.positional_changes.doubled_pawns_created.length > 0) {
+    return 'Vos pions sont doublés et plus difficiles à défendre.';
+  }
+
+  if (facts && facts.material_delta_in_pv < 0) {
+    const lost = Math.abs(facts.material_delta_in_pv);
+    return `Vous perdez environ ${lost} point${lost > 1 ? 's' : ''} de matériel.`;
+  }
+
+  if (evaluation.player_loss_cp !== null && evaluation.player_loss_cp >= 100) {
+    const pawns = (evaluation.player_loss_cp / 100).toFixed(1);
+    return `Ce coup vous coûte environ ${pawns} pion d’avantage.`;
+  }
+
+  // Dernier recours : le verdict lui-même, sans chiffre inventé.
+  return verdict.classification === 'inaccuracy'
+    ? 'Ce coup est un peu moins bon que le meilleur.'
+    : 'Ce coup affaiblit votre position.';
+}
+
+/**
+ * Valorise un bon coup avec un fait vérifiable, sinon avec une formule sûre.
+ */
+function describeGood(context: ExplanationContext): string {
+  const { played, tactical_facts: facts } = context;
+
+  if (facts && facts.new_pins_by_player.length > 0) {
+    const pin = facts.new_pins_by_player[0];
+    return `Votre coup bloque le ${pin.pinned_piece} adverse.`;
+  }
+
+  if (facts && facts.newly_undefended_enemy_pieces.length > 0) {
+    const target = facts.newly_undefended_enemy_pieces[0];
+    return `Vous menacez le ${target.piece} adverse en ${target.square}.`;
+  }
+
+  if (played.captured) {
+    return 'Vous gagnez du matériel sans rien laisser en retour.';
+  }
+
+  return 'Vous ne laissez aucune pièce sans défense.';
+}
+
 
 /**
  * Registre émotionnel PAR CAS. La consigne exige une émotion adaptée :
@@ -572,88 +741,88 @@ const MOODS: Record<string, Mood> = {
   brilliant: {
     tone: "Le coup est BRILLANT. Félicite franchement (« Bravo ! », « Magnifique ! ») en une phrase. Souligne l'idée forte du coup.",
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   great: {
     tone: 'Très bon coup. Encourage chaleureusement, valorise le choix du joueur.',
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   best: {
     tone: "C'est le meilleur coup possible. Valide sobrement (« C'est le meilleur coup »), sans enthousiasme excessif.",
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   excellent: {
     tone: 'Coup très correct. Encourage brièvement.',
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   good: {
     tone: 'Coup correct. Reste neutre et bref.',
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   book: {
     tone: "Coup de théorie (ouverture connue). Rassure : « c'est une ouverture classique, vous êtes bien ».",
     maxInsights: 1,
-    maxWordsPerInsight: 16,
-    maxHeadlineWords: 8,
-    maxTakeawayWords: 12,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   inaccuracy: {
     tone: "Petite imprécision. Signale-le doucement, sans dramatiser, et donne l'action.",
     maxInsights: 2,
-    maxWordsPerInsight: 18,
-    maxHeadlineWords: 9,
-    maxTakeawayWords: 14,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   mistake: {
     tone: "Erreur réelle. Sois ferme mais bienveillant : nomme le problème, puis la correction.",
     maxInsights: 2,
-    maxWordsPerInsight: 18,
-    maxHeadlineWords: 9,
-    maxTakeawayWords: 14,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   blunder: {
     tone: "Grosse erreur. AUCUN reproche, aucune dramatisation : rassure (« pas de panique »), puis donne la correction à jouer.",
     maxInsights: 2,
-    maxWordsPerInsight: 18,
-    maxHeadlineWords: 9,
-    maxTakeawayWords: 14,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   mate_created: {
     tone: 'Le joueur va se faire mater. Ton grave mais calme, sans fatalisme : explique la menace simplement.',
     maxInsights: 2,
-    maxWordsPerInsight: 18,
-    maxHeadlineWords: 9,
-    maxTakeawayWords: 14,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
   mate_lost: {
     tone: "Le joueur avait un mat et l'a laissé filer. Ton déçu mais pas accablant ; rappelle qu'il reste peut-être gagnant.",
     maxInsights: 2,
-    maxWordsPerInsight: 18,
-    maxHeadlineWords: 9,
-    maxTakeawayWords: 14,
+    maxWordsPerInsight: 30,
+    maxHeadlineWords: 12,
+    maxTakeawayWords: 30,
   },
 };
 
 const DEFAULT_MOOD: Mood = {
   tone: 'Ton neutre et encourageant.',
   maxInsights: 1,
-  maxWordsPerInsight: 16,
-  maxHeadlineWords: 8,
-  maxTakeawayWords: 12,
+  maxWordsPerInsight: 30,
+  maxHeadlineWords: 12,
+  maxTakeawayWords: 30,
 };
 
 /** Sélectionne le registre : séquence de mat prioritaire, sinon verdict. */
@@ -724,20 +893,6 @@ function applyMoodLimits(card: CoachCard, context: ExplanationContext): CoachCar
   };
 }
 
-/** Verdict en mots simples (pas de vocabulaire technique). */
-function labelCourt(classification: string): string {
-  switch (classification) {
-    case 'blunder':
-      return 'Grosse erreur';
-    case 'mistake':
-      return 'Erreur';
-    case 'inaccuracy':
-      return 'Petite erreur';
-    default:
-      return 'Coup correct';
-  }
-}
-
 function describePiece(piece?: string): string {
   if (!piece) return 'une pièce';
   const article = ['tour', 'dame'].includes(piece) ? 'la' : 'le';
@@ -754,16 +909,20 @@ function describePlayedFromContext(played: {
   is_check: boolean;
   color: 'white' | 'black';
 }): string {
-  const piece = describePiece(played.piece).replace(/^(le|la) /, '');
+  // « une pièce » (cas inconnu) doit rester grammaticalement correct.
+  const raw = played.piece ? describePiece(played.piece) : 'une pièce';
+  const piece = raw.replace(/^(le|la|une) /, '');
+
   let text: string;
   if (played.captured) {
-    // « pion (en passant) » reste lisible tel quel.
     const captured = played.captured.startsWith('pion')
       ? played.captured
       : `${['tour', 'dame'].includes(played.captured) ? 'la' : 'le'} ${played.captured}`;
     text = `Votre ${piece} prend ${captured}.`;
-  } else {
+  } else if (played.piece) {
     text = `Votre ${piece} change de case.`;
+  } else {
+    text = 'Votre pièce change de case.';
   }
   if (played.is_check) text += ' Le roi est en échec.';
   return text;

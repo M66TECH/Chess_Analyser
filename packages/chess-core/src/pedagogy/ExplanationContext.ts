@@ -97,6 +97,8 @@ export interface ExplanationContext {
     piece?: string;
     captured?: string | null;
     is_check: boolean;
+    /** Le coup livre échec et mat (SAN terminé par #). */
+    is_mate: boolean;
   };
   /** Coup proposé par l'analyse Lichess, quand le coup joué n'est pas le meilleur. */
   best?: {
@@ -232,6 +234,7 @@ export function buildExplanationContext({
       piece: playedPiece,
       captured: capturedPiece ?? null,
       is_check: /[+#]$/.test(record.san),
+      is_mate: record.san.endsWith('#'),
     },
     best: record.bestMove
       ? {
