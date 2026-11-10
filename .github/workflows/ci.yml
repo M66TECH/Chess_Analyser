@@ -32,6 +32,12 @@ jobs:
       - name: Tests (tous les workspaces)
         run: npm test
 
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E Tests (Playwright)
+        run: npm run test:e2e
+
       - name: Lint
         run: npm run lint
 
