@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { COACH_MODELS } from '@chess-analyzer/chess-core';
 import { MAX_COACH_BODY_BYTES } from '../_validation';
+import { enforceRateLimit, rateLimitedResponse } from '../_ratelimit';
 
 const RIVER_URL = 'https://api.river.ai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -47,6 +48,11 @@ function isValidMessages(value: unknown): value is Array<{ role: string; content
 }
 
 export async function POST(request: Request) {
+  // Rate limit AVANT toute lecture du corps : un tiers ne doit pas vider le
+  // quota du LLM en mitraillant la route.
+  const rate = enforceRateLimit(request, 'coach', 40);
+  if (!rate.ok) return rateLimitedResponse(rate);
+
   // Borne la taille du corps AVANT de le lire : un client ne doit pas pouvoir
   // faire parser puis relayer des mégaoctets vers le fournisseur LLM.
   const declaredLength = Number(request.headers.get('content-length') ?? '0');

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { validateFen, validateMoveCount } from '../_validation';
+import { enforceRateLimit, rateLimitedResponse } from '../_ratelimit';
 
 // Server-only secret: never use NEXT_PUBLIC_* here, it would ship the token to
 // every visitor.
@@ -15,6 +16,10 @@ const LICHESS_EXPLORER_URL =
  */
 
 export async function GET(request: Request) {
+  // Rate limit : le jeton Lichess derrière est un quota partagé.
+  const rate = enforceRateLimit(request, 'explorer', 60);
+  if (!rate.ok) return rateLimitedResponse(rate);
+
   const { searchParams } = new URL(request.url);
   const fenCheck = validateFen(searchParams.get('fen'));
   if (!fenCheck.ok) {
@@ -47,7 +52,9 @@ export async function GET(request: Request) {
         'User-Agent': 'ChessAnalyzer/1.0',
         Authorization: `Bearer ${token}`,
       },
-      cache: 'no-store',
+      // Une même position d'ouverture a des stats stables pendant des heures :
+      // éviter le no-store systématique qui brûlait notre quota Lichess.
+      next: { revalidate: 3600 },
       signal: AbortSignal.timeout(15_000),
     });
 

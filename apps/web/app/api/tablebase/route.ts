@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { validateFen } from '../_validation';
+import { enforceRateLimit, rateLimitedResponse } from '../_ratelimit';
 
 export async function GET(request: Request) {
+  // Rate limit : route proxy vers un service externe.
+  const rate = enforceRateLimit(request, 'tablebase', 60);
+  if (!rate.ok) return rateLimitedResponse(rate);
+
   const { searchParams } = new URL(request.url);
   const fenCheck = validateFen(searchParams.get('fen'));
   if (!fenCheck.ok) {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { validateFen, validateMultiPv } from '../_validation';
+import { enforceRateLimit, rateLimitedResponse } from '../_ratelimit';
 
 /**
  * Proxy vers le Cloud Eval de Lichess (l'équivalent REST du websocket
@@ -14,6 +15,10 @@ import { validateFen, validateMultiPv } from '../_validation';
 const CLOUD_EVAL_URL = 'https://lichess.org/api/cloud-eval';
 
 export async function GET(request: Request) {
+  // Rate limit : proxy vers l'API publique Lichess.
+  const rate = enforceRateLimit(request, 'cloud-eval', 60);
+  if (!rate.ok) return rateLimitedResponse(rate);
+
   const { searchParams } = new URL(request.url);
   const fenCheck = validateFen(searchParams.get('fen'));
   if (!fenCheck.ok) {
