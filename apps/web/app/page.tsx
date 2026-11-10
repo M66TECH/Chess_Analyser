@@ -37,6 +37,9 @@ import {
   buildDemo,
   evaluateRetryMove,
   uciToShape,
+  serializeGame,
+  parseStoredGame,
+  GAME_STORE_KEY,
   type DemoStep,
 } from '@chess-analyzer/chess-core';
 import { NavigationBar } from './components/NavigationBar';
@@ -45,7 +48,6 @@ import { HelpModal } from './components/HelpModal';
 import { useEngineAnalysis } from './hooks/useEngineAnalysis';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
-const STORAGE_KEY = 'chess-analyzer:game';
 type PromotionCallback = (piece: 'q' | 'r' | 'b' | 'n') => void;
 
 export default function Home() {
@@ -121,34 +123,32 @@ export default function Home() {
     setSoundEnabled(SoundService.getInstance().isEnabled());
   }, []);
 
-  // --- Persistence: save / restore ---
+  // --- Persistence: save / restore (schéma versionné, cf. GameStore) ---
   const saveGame = useCallback(() => {
     const gm = gmRef.current;
     if (!gm) return;
     const uciMoves = gm.moveManager.getUciMoves();
     if (uciMoves.length === 0) {
-      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      try { localStorage.removeItem(GAME_STORE_KEY); } catch {}
       return;
     }
 
     const initialFen = gm.moveManager.getInitialFen();
-    const currentRecords = gm.getMoveRecords();
-    const slimRecords = currentRecords.map((r) => ({
-      ...r,
-      coachCard: undefined,
-      explanation: undefined,
-      bestPv: undefined,
-      refutationPv: undefined,
-    }));
+    const payload = serializeGame({
+      moves: uciMoves,
+      records: gm.getMoveRecords(),
+      initialFen,
+    });
 
+    // Deux niveaux de repli en cas de quota : complet puis sans records.
     const attempts = [
-      JSON.stringify({ moves: uciMoves, records: slimRecords, initialFen, ts: Date.now() }),
-      JSON.stringify({ moves: uciMoves, initialFen, ts: Date.now() }),
-    ];
+      payload.json,
+      serializeGame({ moves: uciMoves, records: [], initialFen }).json,
+    ].filter(Boolean);
 
-    for (const payload of attempts) {
+    for (const json of attempts) {
       try {
-        localStorage.setItem(STORAGE_KEY, payload);
+        localStorage.setItem(GAME_STORE_KEY, json);
         return;
       } catch {}
     }
@@ -169,24 +169,34 @@ export default function Home() {
   }, []);
 
   const restoreGame = useCallback(() => {
+    let raw: string | null;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const { moves, records: savedRecords, initialFen } = JSON.parse(raw) as {
-        moves: string[];
-        records?: MoveRecord[];
-        initialFen?: string;
-      };
-      if (!Array.isArray(moves) || moves.length === 0) return false;
-      const gm = gmRef.current;
-      if (!gm || !gm.restoreSession(moves, savedRecords, initialFen)) return false;
-      setRecords(gm.getMoveRecords());
-      setActiveNodeId(gm.getActiveNodeId());
-      return true;
+      raw = localStorage.getItem(GAME_STORE_KEY);
     } catch {
       return false;
     }
-  }, []);
+    if (!raw) return false;
+
+    const parsed = parseStoredGame(raw);
+    if (!parsed.ok || !parsed.game) {
+      // Format inconnu / corrompu : on prévient et on n'écrase PAS la sauvegarde
+      // (l'utilisateur peut encore l'exporter manuellement).
+      console.warn('[restoreGame]', parsed.error);
+      showNotice(`Sauvegarde illisible : ${parsed.error ?? 'format inconnu'}`, 8000);
+      return false;
+    }
+
+    const gm = gmRef.current;
+    if (!gm) return false;
+    // Les records d'un ancien format (sans `v`) ne sont pas réutilisés : la
+    // partie est rejouée et réanalysée, ce qui reste correct.
+    const savedRecords = parsed.game.records as unknown as MoveRecord[] | undefined;
+    if (!gm.restoreSession(parsed.game.moves, savedRecords, parsed.game.initialFen)) return false;
+
+    setRecords(gm.getMoveRecords());
+    setActiveNodeId(gm.getActiveNodeId());
+    return true;
+  }, [showNotice]);
 
   // --- Core Lifecycle: GameManager init & listener bindings ---
   useEffect(() => {
@@ -667,7 +677,7 @@ export default function Home() {
     setLastMove(undefined);
     setRecords([]);
     setThreatMode(false);
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    try { localStorage.removeItem(GAME_STORE_KEY); } catch {}
     showNotice('Nouvelle partie.', 3000);
   }, [showNotice, setThreatMode]);
 

@@ -27,3 +27,4 @@ export * from './pedagogy/TolerantRetry';
 export * from './pedagogy/deterministicHighlights';
 export * from './utils/san';
 export * from './utils/evalFormat';
+export * from './services/GameStore';
