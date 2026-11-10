@@ -1,6 +1,10 @@
 import { MoveClassification } from './types';
 import { AccuracyScore } from '../analysis/AccuracyScore';
 import { judgeMove, type PovScore, type LichessMateSequence } from '../analysis/LichessAdvice';
+import {
+  evaluateBrilliancy,
+  type BrilliancyComponents,
+} from './BrilliancyEngine';
 
 export interface ClassifyOptions {
   /** True quand le coup joué égale le meilleur coup de l'analyse. */
@@ -20,6 +24,18 @@ export interface ClassifyOptions {
   prevScore?: PovScore;
   /** Score APRÈS le coup, du point de vue du joueur. */
   nextScore?: PovScore;
+  /** FEN avant le coup joué. */
+  fenBefore?: string;
+  /** Coup UCI joué. */
+  playedMove?: string;
+  /** Meilleur coup recommandé par le moteur. */
+  bestMove?: string;
+  /** Ligne principale du moteur (PV). */
+  pv?: string[];
+  /** Écart de chances entre PV1 et PV2. */
+  multiPvGap?: number;
+  /** Valeur de sacrifice en pions (si précalculée). */
+  sacrificeValue?: number;
 }
 
 export interface ClassifyResult {
@@ -27,6 +43,10 @@ export interface ClassifyResult {
   accuracy: number;
   /** Séquence de mat détectée par le jugement Lichess, quand il y en a une. */
   mateSequence?: LichessMateSequence;
+  /** Score composite d'éclat / brillance [0, 1]. */
+  brilliancyScore?: number;
+  /** Détail des composants de brillance. */
+  brilliancyComponents?: BrilliancyComponents;
 }
 
 export class MoveClassifier {
@@ -34,16 +54,13 @@ export class MoveClassifier {
    * Classifie un coup.
    *
    * Hiérarchie de décision :
-   *  1. Jugement Lichess (CpAdvice → MateAdvice) si les deux scores sont
-   *     fournis — c'est ce qui produit ?!/??/?? sur lichess.org ;
-   *  2. sinon, barème interne sur le delta de chances :
-   *     ≥0.3 blunder, ≥0.2 mistake, ≥0.1 inaccuracy (identique à 1), puis
-   *     les classes positives (brillant/great/best) que Lichess n'a pas côté
-   *     serveur ;
-   *  3. la théorie ne downgrade jamais pire que « good ».
-   *
-   * ⚠ `winDrop` doit être le delta BRUT de `EvalNormalizer.winningChancesDiff`
-   * (sans division par 2) — c'est sur cette échelle que portent les seuils.
+   *  1. Jugement Lichess (CpAdvice → MateAdvice) pour les fautes (!?, ?, ??),
+   *     avec protection théorique (la théorie ne tombe jamais sous « good ») ;
+   *  2. Évaluation des Coups Brillants (!!) et Grands Coups (!) via la formule
+   *     composite (P2.13) ;
+   *  3. Si le coup joué est le meilleur coup recommandé (`isBestMove`), 'best' ;
+   *  4. Si perte négligeable (winDrop <= 0.03), 'excellent' ;
+   *  5. Sinon, 'good'.
    *
    * @param winDrop chances perdues par le joueur (positif = perte)
    */
@@ -61,52 +78,78 @@ export class MoveClassifier {
     const nextScore = options.nextScore;
 
     const accuracy = isBestMove ? 100 : AccuracyScore.calculateMoveAccuracy(winDrop);
-    let classification: MoveClassification = 'good';
     let mateSequence: LichessMateSequence | undefined;
 
-    // 0. Règle fondamentale de Lichess (`AnalysisBuilder.scala#L87`,
-    // `Analysis.scala#L37`, `liveAnnotate.ts#L23`) : si le joueur a joué le
-    // meilleur coup recommandé par Stockfish (`playedMove === bestMove`),
-    // aucune pénalité (?! / ? / ??) ne peut lui être attribuée, même si
-    // l'évaluation fluctue d'un demi-coup à l'autre par effet d'horizon.
+    // 1. Règle Lichess : Si c'est le meilleur coup ('isBestMove'), AUCUNE pénalité
+    //    (?/??/!?) n'est possible (effet d'horizon).
+    if (!isBestMove) {
+      const advised = prevScore && nextScore ? judgeMove(prevScore, nextScore) : undefined;
+      const isMateDelayed =
+        prevScore?.mate !== undefined &&
+        prevScore.mate > 0 &&
+        nextScore?.mate !== undefined &&
+        nextScore.mate > 0;
+
+      let faultJudgment = advised?.judgment;
+      if (!faultJudgment && !isMateDelayed) {
+        if (winDrop >= 0.3) faultJudgment = 'blunder';
+        else if (winDrop >= 0.2) faultJudgment = 'mistake';
+        else if (winDrop >= 0.1) faultJudgment = 'inaccuracy';
+      }
+
+      if (faultJudgment) {
+        mateSequence = advised?.mateSequence;
+        if (isTheory) {
+          // La théorie humaine protège contre les jugements négatifs
+          return mateSequence ? { classification: 'good', accuracy, mateSequence } : { classification: 'good', accuracy };
+        }
+        return mateSequence
+          ? { classification: faultJudgment, accuracy, mateSequence }
+          : { classification: faultJudgment, accuracy };
+      }
+    }
+
+    // 2. Évaluation des coups positifs remarquables (Brillants !! et Grands Coups !)
+    const brilliancy = evaluateBrilliancy({
+      fenBefore: options.fenBefore,
+      playedMove: options.playedMove,
+      isBestMove,
+      pv: options.pv,
+      multiPvGap: options.multiPvGap,
+      prevScore,
+      nextScore,
+      sacrificeValue: options.sacrificeValue,
+      winDrop,
+    });
+
+    if (brilliancy.classification === 'brilliant') {
+      return {
+        classification: 'brilliant',
+        accuracy,
+        brilliancyScore: brilliancy.score,
+        brilliancyComponents: brilliancy.components,
+      };
+    }
+
+    if (brilliancy.classification === 'great') {
+      return {
+        classification: 'great',
+        accuracy,
+        brilliancyScore: brilliancy.score,
+        brilliancyComponents: brilliancy.components,
+      };
+    }
+
+    // 3. Meilleur coup standard
     if (isBestMove) {
       return { classification: 'best', accuracy: 100 };
     }
 
-    // 1. Jugement Lichess quand les scores sont disponibles.
-    const advised = prevScore && nextScore ? judgeMove(prevScore, nextScore) : undefined;
-    const isMateDelayed =
-      prevScore?.mate !== undefined &&
-      prevScore.mate > 0 &&
-      nextScore?.mate !== undefined &&
-      nextScore.mate > 0;
-
-    if (advised?.judgment) {
-      classification = advised.judgment;
-      mateSequence = advised.mateSequence;
-    } else if (!isMateDelayed && winDrop >= 0.3) {
-      // 2a. Barème d'erreurs identique à CpAdvice, appliqué quand les scores
-      // bruts ne sont pas fournis (même échelle, mêmes seuils → aucune
-      // divergence possible avec le jugement Lichess).
-      classification = 'blunder';
-    } else if (!isMateDelayed && winDrop >= 0.2) {
-      classification = 'mistake';
-    } else if (!isMateDelayed && winDrop >= 0.1) {
-      classification = 'inaccuracy';
-    } else if (winDrop <= -0.1) {
-      // 2b. Classes positives (sans équivalent serveur chez lila).
-      classification = 'brilliant';
-    } else if (winDrop <= -0.05) {
-      classification = 'great';
-    } else {
-      classification = 'good';
+    // 4. Coups de très haute précision (si une évaluation avant/après comparative existe)
+    if (prevScore !== undefined && nextScore !== undefined && winDrop <= 0.03) {
+      return { classification: 'excellent', accuracy };
     }
 
-    // 3. La théorie ne tombe jamais sous « good ».
-    if (isTheory && (classification === 'inaccuracy' || classification === 'mistake' || classification === 'blunder')) {
-      classification = 'good';
-    }
-
-    return mateSequence ? { classification, accuracy, mateSequence } : { classification, accuracy };
+    return { classification: 'good', accuracy };
   }
 }

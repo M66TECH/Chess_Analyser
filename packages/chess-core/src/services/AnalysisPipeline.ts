@@ -430,12 +430,17 @@ export class AnalysisPipeline {
       : undefined;
     const nextScore = this.toMoverPovScore(evalAfter);
 
-    // 3. Classification (jugement Lichess d'abord, barème interne ensuite)
+    // 3. Classification (jugement Lichess d'abord, évaluation d'éclat P2.13 ensuite)
     const { classification, accuracy, mateSequence } = MoveClassifier.classify(winDrop, {
       isBestMove,
       isTheory: theory?.isTheory ?? false,
       prevScore,
       nextScore,
+      fenBefore,
+      playedMove: uci,
+      bestMove,
+      pv: evalBefore?.pv,
+      multiPvGap,
     });
 
     // Awareness & Luck
