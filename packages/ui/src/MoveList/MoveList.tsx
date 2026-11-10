@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { MoveRecord, MoveClassification } from '@chess-analyzer/chess-core';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faBookOpen, faStar } from '@fortawesome/free-solid-svg-icons';
 
 interface MoveListProps {
   records: MoveRecord[];
@@ -21,15 +23,15 @@ const getBadgeColor = (classification: MoveClassification) => {
   }
 };
 
-const getBadgeText = (classification: MoveClassification) => {
+const getBadgeContent = (classification: MoveClassification): React.ReactNode => {
   switch (classification) {
     case 'blunder': return '??';
     case 'mistake': return '?';
     case 'inaccuracy': return '?!';
     case 'brilliant': return '!!';
     case 'great': return '!';
-    case 'best': return '★';
-    case 'book': return '\u{1F4D6}';
+    case 'best': return <FontAwesomeIcon icon={faStar} className="w-2.5 h-2.5 inline" />;
+    case 'book': return <FontAwesomeIcon icon={faBookOpen} className="w-2.5 h-2.5 inline" />;
     default: return '';
   }
 };
@@ -102,7 +104,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                 <span>{row.white?.san}</span>
                 {row.white && row.white.classification !== 'good' && (
                   <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.white.classification)}`}>
-                    {getBadgeText(row.white.classification)}
+                    {getBadgeContent(row.white.classification)}
                   </span>
                 )}
               </div>
@@ -119,7 +121,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                   <span>{row.black.san}</span>
                   {row.black.classification !== 'good' && (
                     <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.black.classification)}`}>
-                      {getBadgeText(row.black.classification)}
+                      {getBadgeContent(row.black.classification)}
                     </span>
                   )}
                 </div>

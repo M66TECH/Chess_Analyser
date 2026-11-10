@@ -10,6 +10,7 @@ import { OpeningBook } from '../explorer/OpeningBook';
 import type { OpeningData } from '../explorer/ExplorerCache';
 import { MoveRecord, MoveNode, MoveTheory } from '../pedagogy/types';
 import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
+import { CloudEvalService } from './CloudEvalService';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
 
@@ -158,6 +159,7 @@ export class AnalysisPipeline {
       // Launch the engine right away; the theory answer joins when it arrives.
       void theoryPromise;
 
+      // Succession 1 : Mat, pat ou nulle terminale
       const terminalEval = this.getTerminalEvaluation(fenAfter);
       if (terminalEval) {
         this.latestEval = terminalEval;
@@ -167,9 +169,41 @@ export class AnalysisPipeline {
         return;
       }
 
-      // Historique depuis le dernier coup irréversible : Stockfish reçoit
-      // `position fen <root> moves …` et peut alors détecter les nulles par
-      // répétition, comme `ceval/ctrl.ts` de lila.
+      // Succession 2 : Cache local (EvalCache)
+      const cached = await this.evalCache.get(fenAfter);
+      if (
+        this.pendingMove?.fenAfter === fenAfter &&
+        cached &&
+        (cached.depth >= this.targetDepth || typeof cached.mate === 'number')
+      ) {
+        this.latestEval = cached;
+        this.pedagogyDone = true;
+        this.eventBus.emit('EngineEvaluationUpdated', cached);
+        this.maybeRunPedagogy();
+        return;
+      }
+
+      // Succession 3 : Sonde Cloud Eval (prioritaire sur le calcul local)
+      CloudEvalService.fetch(fenAfter, 1)
+        .then((cloudEvals) => {
+          if (!cloudEvals || cloudEvals.length === 0) return;
+          const cloudBest = cloudEvals[0];
+          if (
+            this.pendingMove?.fenAfter === fenAfter &&
+            !this.pedagogyDone &&
+            (cloudBest.depth >= this.targetDepth || typeof cloudBest.mate === 'number')
+          ) {
+            this.engineManager.stop?.();
+            this.latestEval = cloudBest;
+            this.pedagogyDone = true;
+            this.evalCache.set(fenAfter, cloudBest);
+            this.eventBus.emit('EngineEvaluationUpdated', cloudBest);
+            this.maybeRunPedagogy();
+          }
+        })
+        .catch(() => {});
+
+      // Succession 4 : Repli sur le moteur Stockfish local
       this.engineManager.analyze(
         fenAfter,
         this.targetDepth,
@@ -189,9 +223,11 @@ export class AnalysisPipeline {
     });
 
     this.eventBus.on('EngineEvaluationUpdated', (evaluation) => {
-      // Le cloud n'entre jamais dans le jugement : lila ne juge les parties
-      // qu'avec ses analyses serveur/locales (evalCache sert à l'affichage).
-      if (evaluation.source === 'cloud') return;
+      // Si l'évaluation vient du cloud, on l'accepte si elle atteint la profondeur cible ou un mat
+      if (evaluation.source === 'cloud') {
+        const meetsTarget = evaluation.depth >= this.targetDepth || typeof evaluation.mate === 'number';
+        if (!meetsTarget) return;
+      }
 
       if (evaluation.fen) {
         let pvMap = this.multiPvsByFen.get(evaluation.fen);
@@ -209,9 +245,19 @@ export class AnalysisPipeline {
       // real move is pending, otherwise it would pollute the eval cache.
       if (!this.pendingMove) {
         // Warm-up: cache the initial position eval so the first move's bestMove is available
-        if (this.warmFen && evaluation.depth >= this.targetDepth && evaluation.fen === this.warmFen) {
+        const isCloudReady = evaluation.source === 'cloud' && (evaluation.depth >= this.targetDepth || typeof evaluation.mate === 'number');
+        const isLocalReady = evaluation.depth >= this.targetDepth;
+        if (
+          this.warmFen &&
+          (isCloudReady || isLocalReady) &&
+          evaluation.fen === this.warmFen
+        ) {
+          const fen = this.warmFen;
           this.warmFen = null;
-          this.evalCache.set(evaluation.fen!, evaluation);
+          this.evalCache.set(fen, evaluation);
+          if (evaluation.source === 'cloud') {
+            this.engineManager.stop?.();
+          }
         }
         return;
       }
@@ -224,10 +270,16 @@ export class AnalysisPipeline {
 
       this.latestEval = evaluation;
 
-      // Run pedagogy when reaching target depth (or when the search is over: mate found, stop, etc.)
-      if (!this.pedagogyDone && evaluation.depth >= this.targetDepth) {
+      // Run pedagogy when reaching target depth, or immediately for cloud eval that has reached target depth/mate
+      const isCloudReady = evaluation.source === 'cloud' && (evaluation.depth >= this.targetDepth || typeof evaluation.mate === 'number');
+      const isLocalReady = evaluation.depth >= this.targetDepth;
+
+      if (!this.pedagogyDone && (isCloudReady || isLocalReady)) {
         this.pedagogyDone = true;
         this.evalCache.set(this.pendingMove.fenAfter, evaluation);
+        if (evaluation.source === 'cloud') {
+          this.engineManager.stop?.();
+        }
         this.maybeRunPedagogy();
       }
     });
@@ -513,9 +565,12 @@ export class AnalysisPipeline {
       if (!evalBefore) continue;
       this.evalCache.set(node.fenBefore, evalBefore);
 
-      const evalAfter = await this.awaitEval(node.fenAfter, this.targetDepth, perMoveTimeout);
+      const evalAfter =
+        (await this.evalCache.get(node.fenAfter)) ??
+        (await this.awaitEval(node.fenAfter, this.targetDepth, perMoveTimeout));
       if (isCancelled()) return;
       if (!evalAfter) continue;
+      this.evalCache.set(node.fenAfter, evalAfter);
 
       // Opening database lookup for this position (human theory).
       const { data, opening } = await OpeningExplorer.fetchWithOpening(node.fenBefore);
@@ -552,13 +607,37 @@ export class AnalysisPipeline {
 
   /**
    * Waits for the primary-PV evaluation of `fen` to reach `depth`.
+   * Succession : 1. Terminal -> 2. Local Cache -> 3. Cloud Eval -> 4. Local Stockfish WASM
    */
-  private awaitEval(fen: string, depth: number = this.targetDepth, timeoutMs: number = 30000): Promise<EngineEvaluation | null> {
+  private async awaitEval(fen: string, depth: number = this.targetDepth, timeoutMs: number = 30000): Promise<EngineEvaluation | null> {
+    // 1. Position terminale (mat, pat, nulle théorique) -> éval instantanée
     const terminalEval = this.getTerminalEvaluation(fen);
     if (terminalEval) {
-      return Promise.resolve(terminalEval);
+      return terminalEval;
     }
 
+    // 2. Cache local (EvalCache : IndexedDB / mémoire)
+    const cached = await this.evalCache.get(fen);
+    if (cached && (cached.depth >= depth || typeof cached.mate === 'number')) {
+      return cached;
+    }
+
+    // 3. Nuage Lichess (Cloud Eval API) : vérifié en PREMIER avant de lancer le moteur local
+    try {
+      const cloudEvals = await CloudEvalService.fetch(fen, 1);
+      if (cloudEvals && cloudEvals.length > 0) {
+        const cloudBest = cloudEvals[0];
+        if (cloudBest.depth >= depth || typeof cloudBest.mate === 'number') {
+          await this.evalCache.set(fen, cloudBest);
+          this.eventBus.emit('EngineEvaluationUpdated', cloudBest);
+          return cloudBest;
+        }
+      }
+    } catch {
+      // Échec réseau ou position non trouvée, repli moteur local
+    }
+
+    // 4. Moteur local Stockfish WASM en repli
     return new Promise((resolve) => {
       let resolved = false;
       // Keep the deepest evaluation seen, so a search that ends before `depth`
@@ -577,7 +656,9 @@ export class AnalysisPipeline {
         if (evaluation.multiPv && evaluation.multiPv !== 1) return;
         if (evaluation.fen && evaluation.fen !== fen) return;
         if (!best || evaluation.depth > best.depth) best = evaluation;
-        if (evaluation.depth >= depth) finish(evaluation);
+        const isCloudReady = evaluation.source === 'cloud' && (evaluation.depth >= depth || typeof evaluation.mate === 'number');
+        const isLocalReady = evaluation.depth >= depth;
+        if (isCloudReady || isLocalReady) finish(evaluation);
       };
       // Un `bestmove` résiduel de la position précédente peut arriver avant la
       // première ligne `info` de la nouvelle position (`best === null`). On ne
@@ -592,11 +673,51 @@ export class AnalysisPipeline {
     });
   }
 
-  public initialize(fen?: string) {
+  public async initialize(fen?: string) {
     const currentFen = fen || this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: currentFen });
     this.warmFen = currentFen;
+
+    // Succession 1 : Terminal check
+    const terminalEval = this.getTerminalEvaluation(currentFen);
+    if (terminalEval) {
+      this.warmFen = null;
+      this.evalCache.set(currentFen, terminalEval);
+      this.eventBus.emit('EngineEvaluationUpdated', terminalEval);
+      return;
+    }
+
+    // Succession 2 : EvalCache check
+    const cached = await this.evalCache.get(currentFen);
+    if (cached && (cached.depth >= this.targetDepth || typeof cached.mate === 'number')) {
+      this.warmFen = null;
+      this.eventBus.emit('EngineEvaluationUpdated', cached);
+      return;
+    }
+
+    // Succession 3 : Cloud Eval probe
+    CloudEvalService.fetch(currentFen, 1)
+      .then((cloudEvals) => {
+        if (!cloudEvals || cloudEvals.length === 0) return;
+        const cloudBest = cloudEvals[0];
+        if (
+          this.warmFen === currentFen &&
+          (cloudBest.depth >= this.targetDepth || typeof cloudBest.mate === 'number')
+        ) {
+          this.warmFen = null;
+          this.evalCache.set(currentFen, cloudBest);
+          this.engineManager.stop?.();
+          this.eventBus.emit('EngineEvaluationUpdated', cloudBest);
+        }
+      })
+      .catch(() => {});
+
+    // Succession 4 : Fallback local Stockfish WASM
     this.engineManager.analyze(currentFen, this.targetDepth);
+  }
+
+  public getEvalCache(): EvalCache {
+    return this.evalCache;
   }
 
   public getMoveRecords(): MoveRecord[] {

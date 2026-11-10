@@ -108,6 +108,8 @@ export class EngineManager {
 
   /** `stop` sans émettre `AnalysisFinished` : le worker répondra lui-même `bestmove`. */
   public stop() {
+    this.pendingGo = null;
+    this.pendingFen = null;
     if (!this.worker) return;
     this.send('stop');
   }

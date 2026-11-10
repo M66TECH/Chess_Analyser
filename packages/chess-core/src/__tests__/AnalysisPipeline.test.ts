@@ -3,6 +3,7 @@ import { AnalysisPipeline } from '../services/AnalysisPipeline';
 import { MoveManager } from '../services/MoveManager';
 import { GameEventBus, EngineEvaluation } from '../events/GameEventBus';
 import { OpeningExplorer } from '../explorer/OpeningExplorer';
+import { CloudEvalService } from '../services/CloudEvalService';
 import type { EngineManager } from '../engine/EngineManager';
 
 /**
@@ -15,6 +16,7 @@ class FakeEngine {
     this.requested.push({ fen, depth });
   });
   public terminate = vi.fn();
+  public stop = vi.fn();
 }
 
 function setup() {
@@ -271,5 +273,55 @@ describe('AnalysisPipeline', () => {
     expect(records).toHaveLength(1);
     expect(records[0].cpAfter).toBe(0);
     expect(records[0].classification).toBe('blunder');
+  });
+
+  it('donne la priorité à Cloud Eval ("letCloudWin") et arrête le moteur local si profondeur suffisante', async () => {
+    const { eventBus, moveManager, engine, pipeline } = setup();
+
+    pipeline.initialize(START);
+    eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: 20, pv: ['e2e4'] }));
+
+    const move = moveManager.playMove('e2e4');
+    eventBus.emit('MovePlayed', {
+      fenBefore: START,
+      fenAfter: moveManager.getFen(),
+      move: 'e2e4',
+      nodeId: move.nodeId!,
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    // Cloud Eval arrive avec profondeur 35 et source 'cloud'
+    eventBus.emit(
+      'EngineEvaluationUpdated',
+      evaluation({ fen: moveManager.getFen(), depth: 35, source: 'cloud', cp: -25, pv: ['e7e5'] })
+    );
+
+    const records = pipeline.getMoveRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0].playedMove).toBe('e2e4');
+    expect(engine.stop).toHaveBeenCalled();
+  });
+
+  it('utilise Cloud Eval dans analyzeGame() pour aller plus vite sans solliciter le moteur local', async () => {
+    const { moveManager, engine, pipeline } = setup();
+
+    const move = moveManager.playMove('e2e4');
+    const node = moveManager.getTree().nodes.get(move.nodeId!)!;
+
+    // Mock CloudEvalService.fetch pour simuler des réponses immédiates du nuage Lichess
+    vi.spyOn(CloudEvalService, 'fetch').mockImplementation((fen: string) => {
+      return Promise.resolve([
+        evaluation({ fen, depth: 40, source: 'cloud', cp: 20, pv: ['e2e4'] }),
+      ]);
+    });
+
+    const engineAnalyzeCallsBefore = engine.requested.length;
+    await pipeline.analyzeGame([node]);
+
+    const records = pipeline.getMoveRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0].playedMove).toBe('e2e4');
+    // Le moteur local n'a pas eu besoin d'être appelé pour ces positions car le nuage a répondu immédiatement
+    expect(engine.requested.length).toBe(engineAnalyzeCallsBefore);
   });
 });

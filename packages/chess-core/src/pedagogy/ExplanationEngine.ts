@@ -227,6 +227,25 @@ Réponds UNIQUEMENT par un objet JSON valide :
 {"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
 kinds autorisés : played_move, missed_move, mistake, good_decision, consequence.`;
 
+  /**
+   * Budget LLM par session (P1-9). Compteur statique : une session =
+   * un chargement de page. Au-delà du budget, on bascule sur le fallback
+   * SANS consommer de quota : un import PGN de 80 coups ne doit pas
+   * déclencher 80 appels LLM ruinant la clé API.
+   */
+  private static llmCallsThisSession = 0;
+  private static readonly LLM_SESSION_BUDGET = 40;
+
+  /** Budget restant pour cette session (transparence / tests). */
+  public static get remainingLlmBudget(): number {
+    return Math.max(0, this.LLM_SESSION_BUDGET - this.llmCallsThisSession);
+  }
+
+  /** Remet le budget à zéro (tests, nouvelle session). */
+  public static resetLlmBudget(): void {
+    this.llmCallsThisSession = 0;
+  }
+
   /** Génère la fiche pédagogique d'un coup analysé (avec appel IA + fallback local). */
   public static async generateCard(
     record: MoveRecord,
@@ -235,27 +254,36 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
   ): Promise<CoachCard> {
     const context = this.buildContext(record, previousClassification);
 
+    // Budget épuisé : fallback IMMÉDIAT, sans coût réseau, avec badge.
+    if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) {
+      const local = this.fallbackCard(context, level);
+      return { ...local, degraded: true };
+    }
+
     try {
+      this.llmCallsThisSession++;
       const raw = await RiverAPI.complete(this.buildPrompt(context, level), this.SYSTEM_PROMPT, {
         temperature: 0.3,
         maxTokens: 900,
       });
       const parsed = this.parseCard(raw);
+
       if (parsed && isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
-        // Le prompt demande la brièveté ; le code la GARANTIT (un modèle peut
-        // dépasser). Mêmes bornes que le fallback local.
+        // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
+        // n'est pas nécessaire : carte LLM complète, non dégradée.
         return applyMoodLimits({ ...parsed, level }, context);
       }
 
-      if (parsed && !isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
-        // Réponse dans une autre langue : on ne la montre pas telle quelle.
-        console.error('[ExplanationEngine] Non-French answer discarded, using local card.');
-      }
+      // Réponse non française ou unparseable : fallback avec badge.
+      console.error('[ExplanationEngine] Réponse LLM rejetée, fallback local avec badge.');
+      const local = this.fallbackCard(context, level);
+      return { ...local, degraded: true };
     } catch (error) {
-      console.error('[ExplanationEngine] Falling back to local explanation:', error);
+      // LLM indisponible (clé expirée, réseau, timeout) : fallback + badge.
+      console.error('[ExplanationEngine] LLM indisponible, fallback local avec badge:', error);
+      const local = this.fallbackCard(context, level);
+      return { ...local, degraded: true };
     }
-
-    return this.fallbackCard(context, level);
   }
 
   /** Génère immédiatement une fiche pédagogique déterministe sans appel réseau. */

@@ -1,5 +1,13 @@
 "use client";
 import React from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faChessQueen,
+  faChessRook,
+  faChessBishop,
+  faChessKnight,
+} from '@fortawesome/free-solid-svg-icons';
+import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
 export interface PromotionDialogProps {
   from: string;
@@ -9,11 +17,11 @@ export interface PromotionDialogProps {
   onCancel: () => void;
 }
 
-const PIECES: Array<{ piece: 'q' | 'r' | 'b' | 'n'; symbol: string; label: string }> = [
-  { piece: 'q', symbol: '♛', label: 'Dame' },
-  { piece: 'r', symbol: '♜', label: 'Tour' },
-  { piece: 'b', symbol: '♝', label: 'Fou' },
-  { piece: 'n', symbol: '♞', label: 'Cavalier' },
+const PIECES: Array<{ piece: 'q' | 'r' | 'b' | 'n'; icon: IconDefinition; label: string }> = [
+  { piece: 'q', icon: faChessQueen, label: 'Dame' },
+  { piece: 'r', icon: faChessRook, label: 'Tour' },
+  { piece: 'b', icon: faChessBishop, label: 'Fou' },
+  { piece: 'n', icon: faChessKnight, label: 'Cavalier' },
 ];
 
 export const PromotionDialog: React.FC<PromotionDialogProps> = ({ color, onSelect, onCancel }) => {
@@ -33,15 +41,15 @@ export const PromotionDialog: React.FC<PromotionDialogProps> = ({ color, onSelec
       >
         <h2 className="text-sm font-semibold text-slate-300 mb-4 text-center">Promotion : choisissez une pièce</h2>
         <div className="grid grid-cols-4 gap-3">
-          {PIECES.map(({ piece, symbol, label }) => (
+          {PIECES.map(({ piece, icon, label }) => (
             <button
               key={piece}
               onClick={() => onSelect(piece)}
-              className={`flex flex-col items-center gap-1 p-3 rounded-xl border border-slate-600/50 hover:border-indigo-500 hover:bg-indigo-500/10 transition-colors ${bgColor}`}
+              className={`flex flex-col items-center gap-2 p-3 rounded-xl border border-slate-600/50 hover:border-indigo-500 hover:bg-indigo-500/10 transition-colors ${bgColor}`}
               aria-label={label}
               title={label}
             >
-              <span className={`text-4xl leading-none ${pieceColor}`}>{symbol}</span>
+              <FontAwesomeIcon icon={icon} className={`text-3xl ${pieceColor}`} />
               <span className="text-[10px] text-slate-500 font-medium">{label}</span>
             </button>
           ))}

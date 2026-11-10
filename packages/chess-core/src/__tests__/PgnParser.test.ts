@@ -37,6 +37,24 @@ describe('PgnParser', () => {
       const result = PgnParser.parse('1. Xyz9 *');
       expect(result.success).toBe(false);
     });
+
+    it('parseTree extrait correctement les variantes RAV imbriquées', () => {
+      const pgn = `1. e4 e5 (1... c5 2. Nf3 (2. Nc3 Nc6)) 2. Nf3 Nc6 *`;
+      const result = PgnParser.parseTree(pgn);
+      expect(result.success).toBe(true);
+      expect(result.mainlineMoves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+      
+      // Doit contenir les coups de la ligne principale ET des variantes
+      const sans = Array.from(result.nodes.values()).map(n => n.san);
+      expect(sans).toContain('e4');
+      expect(sans).toContain('e5');
+      expect(sans).toContain('c5');
+      expect(sans).toContain('Nc3');
+      
+      const c5Node = Array.from(result.nodes.values()).find(n => n.san === 'c5');
+      expect(c5Node).toBeDefined();
+      expect(c5Node?.isMainline).toBe(false);
+    });
   });
 
   describe('exportAnnotatedPgn', () => {
@@ -67,6 +85,21 @@ describe('PgnParser', () => {
       expect(pgn).toContain('1. e4??');
       expect(pgn).toContain('[%eval 0.20]');
       expect(pgn).toContain('Blunder');
+    });
+
+    it('exporte les variantes entre parenthèses selon la norme PGN', () => {
+      const pgnInput = `1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *`;
+      const treeRes = PgnParser.parseTree(pgnInput);
+      expect(treeRes.success).toBe(true);
+
+      const exported = PgnParser.exportAnnotatedPgn([], {
+        nodes: treeRes.nodes,
+        initialFen: treeRes.initialFen,
+      });
+
+      expect(exported).toContain('1. e4');
+      expect(exported).toContain('e5');
+      expect(exported).toContain('(1... c5 2. Nf3)');
     });
   });
 });

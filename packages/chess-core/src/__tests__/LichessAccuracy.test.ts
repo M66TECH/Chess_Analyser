@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { MoveClassifier } from '../pedagogy/MoveClassifier';
 import {
   accuracyFromWinPercent,
   ceilCp,
@@ -270,6 +271,16 @@ describe('LichessAccuracy', () => {
       expect(phases.opening?.white).toBeCloseTo(100, 1);
       expect(phases.middlegame?.white).toBeCloseTo(100, 1);
       expect(phases.endgame?.white).toBeCloseTo(100, 1);
+    });
+  });
+
+  describe('MoveClassifier', () => {
+    it('classifie les coups selon la perte de chances (blunder, mistake, inaccuracy, good, best)', () => {
+      expect(MoveClassifier.classify(0.35).classification).toBe('blunder');
+      expect(MoveClassifier.classify(0.22).classification).toBe('mistake');
+      expect(MoveClassifier.classify(0.12).classification).toBe('inaccuracy');
+      expect(MoveClassifier.classify(0.05).classification).toBe('good');
+      expect(MoveClassifier.classify(0, { isBestMove: true }).classification).toBe('best');
     });
   });
 });

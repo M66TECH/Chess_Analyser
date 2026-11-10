@@ -9,3 +9,8 @@ export * from './CoachBubble';
 export * from './PgnImportModal';
 export * from './PromotionDialog';
 export * from './BoardDemo';
+export * from './GameReview';
+export * from './MoveTree';
+export * from './sound/SoundService';
+export * from './icons';
+

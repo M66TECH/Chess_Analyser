@@ -1,6 +1,7 @@
 import { Chess } from 'chessops/chess';
 import { makeFen, parseFen } from 'chessops/fen';
 import { parseUci, makeSquare, parseSquare } from 'chessops/util';
+import { makeSan } from 'chessops/san';
 import type { Role } from 'chessops/types';
 
 /**
@@ -55,6 +56,8 @@ export interface DemoStep {
   /** Position APRÈS le coup, pour l'affichage. */
   fen: string;
   uci: string;
+  /** Notation algébrique courte (ex. "e4", "Cf3", "Fxf7+"). */
+  san?: string;
   /** Phrase courte, ou '' si elle n'apporte rien. */
   caption: string;
   from: string;
@@ -169,11 +172,18 @@ export function buildDemo(fen: string, pv: string[], maxPlies = 6): DemoStep[] {
     if (!description) break;
 
     const move = parseUci(uci)!;
+    let san: string | undefined;
+    try {
+      san = makeSan(pos, move);
+    } catch {
+      // Ignorer si échec du calcul SAN
+    }
     pos.play(move);
 
     steps.push({
       fen: posToFen(pos),
       uci,
+      san,
       caption: description.text,
       from: description.from,
       to: description.to,

@@ -28,6 +28,12 @@ export interface CoachCard {
   takeaway: string;
   /** Niveau de lecture employé, pour transparence. */
   level: PlayerLevel;
+  /**
+   * P1-9 : `true` quand cette carte vient du fallback déterministe (LLM
+   * indisponible, budget épuisé, réponse rejetée). L'UI affiche un badge
+   * « Explication locale de repli » pour ne pas le cacher au joueur.
+   */
+  degraded?: boolean;
 }
 
 export type PlayerLevel = 'debutant' | 'intermediaire' | 'avance';

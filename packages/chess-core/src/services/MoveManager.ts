@@ -318,6 +318,54 @@ export class MoveManager {
   public getUciMovesString(): string {
     return this.getUciMoves().join(' ');
   }
+
+  /**
+   * Importe un ensemble de nœuds pour former un arbre de coups (Lot 3).
+   * Reconstitue la position courante et réajuste le compteur d'identifiants.
+   */
+  public importTree(
+    nodes: Map<string, MoveNode> | MoveNode[],
+    initialFen?: string,
+    currentNodeId?: string | null
+  ): void {
+    if (initialFen) {
+      try {
+        const parsed = parseFen(initialFen).unwrap();
+        this.pos = Chess.fromSetup(parsed).unwrap();
+        this.initialFen = initialFen;
+      } catch {
+        this.pos = Chess.default();
+        this.initialFen = makeFen(this.pos.toSetup());
+      }
+    } else {
+      this.resetToInitial();
+    }
+
+    this.nodes.clear();
+    let maxId = 0;
+
+    const list = nodes instanceof Map ? Array.from(nodes.values()) : nodes;
+    for (const node of list) {
+      this.nodes.set(node.id, { ...node, childrenIds: [...node.childrenIds] });
+      const match = node.id.match(/(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxId) maxId = num;
+      }
+    }
+    this.nextId = maxId + 1;
+
+    if (currentNodeId !== undefined) {
+      this.goToNode(currentNodeId);
+    } else {
+      const mainline = Array.from(this.nodes.values()).filter((n) => n.isMainline);
+      if (mainline.length > 0) {
+        this.goToNode(mainline[mainline.length - 1].id);
+      } else {
+        this.resetToInitial();
+      }
+    }
+  }
   
   public getTree() {
     return {

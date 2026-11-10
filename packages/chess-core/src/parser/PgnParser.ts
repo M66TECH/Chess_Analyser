@@ -1,40 +1,46 @@
-﻿/**
- * E5 â€” ImplÃ©mentation rÃ©elle du parsing PGN via chessops/pgn.
- * Retourne les coups UCI pour permettre leur rejeu dans GameManager.loadPgn().
+/**
+ * E5 & Phase 7/8 — Parsing PGN et export RAV récursif multi-branches.
+ * Supporte la ligne principale ainsi que toutes les sous-variantes imbriquées (RAV).
  */
-import { parsePgn, PgnNodeData } from 'chessops/pgn';
+import { parsePgn, PgnNodeData, Node } from 'chessops/pgn';
 import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
 import { makeUci } from 'chessops/util';
-import { parseFen } from 'chessops/fen';
-import type { MoveRecord } from '../pedagogy/types';
+import { parseFen, makeFen } from 'chessops/fen';
+import type { MoveRecord, MoveNode } from '../pedagogy/types';
 
 export interface PgnParseResult {
   success: boolean;
   headers: Record<string, string>;
-  moves: string[];   // UCI moves
+  moves: string[]; // UCI moves
+  error?: string;
+}
+
+export interface PgnTreeParseResult {
+  success: boolean;
+  headers: Record<string, string>;
+  initialFen: string;
+  nodes: Map<string, MoveNode>;
+  mainlineMoves: string[];
   error?: string;
 }
 
 export class PgnParser {
   /**
-   * Parse un texte PGN et retourne les coups UCI dans l'ordre.
-   * Supporte les PGN standards (pas de variantes â€” seule la ligne principale est lue).
+   * Parse un texte PGN complet avec toutes ses sous-variantes récursives (Lot 3).
    */
-  static parse(pgn: string): PgnParseResult {
+  static parseTree(pgn: string): PgnTreeParseResult {
     if (!pgn || pgn.trim().length === 0) {
-      return { success: false, headers: {}, moves: [], error: 'PGN vide' };
+      return { success: false, headers: {}, initialFen: '', nodes: new Map(), mainlineMoves: [], error: 'PGN vide' };
     }
 
     try {
       const games = parsePgn(pgn);
       if (!games || games.length === 0) {
-        return { success: false, headers: {}, moves: [], error: 'Aucune partie trouvÃ©e dans le PGN' };
+        return { success: false, headers: {}, initialFen: '', nodes: new Map(), mainlineMoves: [], error: 'Aucune partie trouvée dans le PGN' };
       }
 
       const game = games[0];
-
-      // Extraire les en-tÃªtes
       const headers: Record<string, string> = {};
       if (game.headers) {
         for (const [key, value] of game.headers) {
@@ -42,59 +48,129 @@ export class PgnParser {
         }
       }
 
-      // Construire la position de dÃ©part (FEN personnalisÃ© si prÃ©sent)
       const setupFen = headers['FEN'];
-      const startPosition = (() => {
-        if (!setupFen) return Chess.default();
+      const standardStart = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      let startPos: Chess;
+      let initialFen = standardStart;
+
+      if (setupFen) {
         try {
-          return Chess.fromSetup(parseFen(setupFen).unwrap()).unwrap();
+          const parsed = parseFen(setupFen).unwrap();
+          startPos = Chess.fromSetup(parsed).unwrap();
+          initialFen = setupFen;
         } catch {
-          return Chess.default();
+          startPos = Chess.default();
         }
-      })();
-      const pos = startPosition;
-
-      // Parcourir la ligne principale du PGN et convertir SAN â†’ UCI
-      const uciMoves: string[] = [];
-      let node = game.moves;
-
-      while (node.children.length > 0) {
-        const child = node.children[0];
-        const data: PgnNodeData = child.data;
-        const san = data.san;
-
-        // Les commentaires de variante ("{}" ou "*") ne sont pas des coups
-        if (!san || san === '*' || san.startsWith('{')) break;
-
-        try {
-          const move = parseSan(pos, san);
-          if (!move) break;
-          uciMoves.push(makeUci(move));
-          pos.play(move);
-        } catch {
-          // Coup illÃ©gal ou SAN invalide â€” on s'arrÃªte ici
-          break;
-        }
-
-        node = child;
+      } else {
+        startPos = Chess.default();
       }
 
-      if (uciMoves.length === 0) {
-        return { success: false, headers, moves: [], error: 'Aucun coup valide trouvÃ© dans le PGN' };
+      const nodes = new Map<string, MoveNode>();
+      const mainlineMoves: string[] = [];
+      let nextId = 1;
+
+      // Parcours récursif pour explorer la ligne principale et toutes les sous-branches RAV (children[1..n])
+      const walk = (
+        pgnNode: Node<PgnNodeData>,
+        parentId: string | null,
+        currentPos: Chess,
+        isMainlineBranch: boolean
+      ) => {
+        for (let i = 0; i < pgnNode.children.length; i++) {
+          const child = pgnNode.children[i];
+          const san = child.data?.san;
+          if (!san || san === '*' || san.startsWith('{')) continue;
+
+          const branchPos = currentPos.clone();
+          try {
+            const move = parseSan(branchPos, san);
+            if (!move) continue;
+
+            const uci = makeUci(move);
+            const fenBefore = makeFen(branchPos.toSetup());
+            const turnColor = branchPos.turn === 'white' ? 'white' : 'black';
+            const moveNumber = branchPos.fullmoves;
+
+            branchPos.play(move);
+            const fenAfter = makeFen(branchPos.toSetup());
+
+            const isMainline = isMainlineBranch && i === 0;
+            const nodeId = `node_${nextId++}`;
+
+            const node: MoveNode = {
+              id: nodeId,
+              uci,
+              san,
+              fenBefore,
+              fenAfter,
+              moveNumber,
+              color: turnColor,
+              parentId,
+              childrenIds: [],
+              isMainline,
+            };
+
+            nodes.set(nodeId, node);
+
+            if (parentId) {
+              const p = nodes.get(parentId);
+              if (p) p.childrenIds.push(nodeId);
+            }
+
+            if (isMainline) {
+              mainlineMoves.push(uci);
+            }
+
+            // Récursion pour les coups enfants
+            walk(child, nodeId, branchPos, isMainline);
+          } catch {
+            // Coup illégal ou non analysable
+          }
+        }
+      };
+
+      walk(game.moves, null, startPos, true);
+
+      if (nodes.size === 0) {
+        return { success: false, headers, initialFen, nodes, mainlineMoves: [], error: 'Aucun coup valide trouvé dans le PGN' };
       }
 
-      return { success: true, headers, moves: uciMoves };
+      return {
+        success: true,
+        headers,
+        initialFen,
+        nodes,
+        mainlineMoves,
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erreur inconnue lors du parsing PGN';
-      return { success: false, headers: {}, moves: [], error: msg };
+      return { success: false, headers: {}, initialFen: '', nodes: new Map(), mainlineMoves: [], error: msg };
     }
   }
 
   /**
-   * Génère un fichier PGN annoté à partir des analyses de Stockfish.
+   * Parse un texte PGN et retourne les coups UCI de la ligne principale.
+   * Rétro-compatible avec l'ensemble des tests et appelants.
    */
-  static exportAnnotatedPgn(records: MoveRecord[]): string {
-    if (records.length === 0) {
+  static parse(pgn: string): PgnParseResult {
+    const res = PgnParser.parseTree(pgn);
+    return {
+      success: res.success,
+      headers: res.headers,
+      moves: res.mainlineMoves,
+      error: res.error,
+    };
+  }
+
+  /**
+   * Génère un fichier PGN annoté à partir des analyses de Stockfish.
+   * Supporte l'export complet de variantes imbriquées (RAV) si un arbre est fourni.
+   */
+  static exportAnnotatedPgn(
+    records: MoveRecord[],
+    tree?: { nodes: Map<string, MoveNode>; initialFen?: string }
+  ): string {
+    if (records.length === 0 && (!tree || tree.nodes.size === 0)) {
       return '[Event "Chess Analyzer Export"]\n[Site "Local"]\n[Result "*"]\n\n*\n';
     }
 
@@ -104,59 +180,127 @@ export class PgnParser {
     pgn += `[Date "${date}"]\n`;
     pgn += '[Round "-"]\n[White "White"]\n[Black "Black"]\n';
 
-    // Position de dÃ©part personnalisÃ©e : sans SetUp/FEN, le PGN serait
-    // illisible (les coups ne correspondraient pas Ã  la position standard).
     const standardStart = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    const startFen = records[0].fenBefore;
+    const startFen = tree?.initialFen ?? (records.length > 0 ? records[0].fenBefore : standardStart);
     if (startFen !== standardStart) {
       pgn += `[SetUp "1"]\n[FEN "${startFen}"]\n`;
     }
     pgn += '[Result "*"]\n\n';
 
-    // Tokens assemblÃ©s puis repliÃ©s UNIQUEMENT entre tokens : couper au milieu
-    // d'un commentaire `{ ... }` corromprait le PGN.
+    const recordsByNodeId = new Map<string, MoveRecord>();
+    for (const r of records) {
+      recordsByNodeId.set(r.nodeId, r);
+    }
+
     const tokens: string[] = [];
 
-    for (let i = 0; i < records.length; i++) {
-      const r = records[i];
-      const isWhite = r.color === 'white';
+    // Si un arbre est fourni avec des variantes
+    if (tree && tree.nodes.size > 0) {
+      const nodes = tree.nodes;
+      const rootNodes = Array.from(nodes.values()).filter((n) => n.parentId === null);
 
-      if (isWhite) {
-        tokens.push(`${Math.floor(r.moveNumber)}.`);
-      } else if (i === 0 || records[i - 1].color !== 'white') {
-        tokens.push(`${Math.floor(r.moveNumber)}...`);
+      const serializeBranch = (nodeId: string, isFirstInBranch: boolean): string[] => {
+        const branchTokens: string[] = [];
+        let currId: string | null = nodeId;
+        let first = isFirstInBranch;
+
+        while (currId) {
+          const node = nodes.get(currId);
+          if (!node) break;
+
+          if (node.color === 'white') {
+            branchTokens.push(`${Math.floor(node.moveNumber)}.`);
+          } else if (first) {
+            branchTokens.push(`${Math.floor(node.moveNumber)}...`);
+          }
+          first = false;
+
+          let moveSan = node.san;
+          const rec = recordsByNodeId.get(node.id);
+          if (rec) {
+            if (rec.classification === 'blunder') moveSan += '??';
+            else if (rec.classification === 'mistake') moveSan += '?';
+            else if (rec.classification === 'inaccuracy') moveSan += '?!';
+          }
+          branchTokens.push(moveSan);
+
+          if (rec) {
+            const comments: string[] = [];
+            if (rec.mateAfter !== undefined && rec.mateAfter !== 0) {
+              const whitePovMate = rec.color === 'white' ? -rec.mateAfter : rec.mateAfter;
+              comments.push(`[%eval #${whitePovMate}]`);
+            } else if (rec.cpAfter !== undefined) {
+              comments.push(`[%eval ${(rec.cpAfter / 100).toFixed(2)}]`);
+            }
+            if (rec.classification === 'blunder' || rec.classification === 'mistake' || rec.classification === 'inaccuracy') {
+              const textClass = rec.classification === 'blunder' ? 'Blunder' : rec.classification === 'mistake' ? 'Mistake' : 'Inaccuracy';
+              const best = rec.bestMove && rec.bestMove !== rec.playedMove ? `${rec.bestMove} was best.` : '';
+              comments.push(`${textClass}. ${best}`.trim());
+            }
+            if (comments.length > 0) {
+              branchTokens.push(`{ ${comments.join(' ')} }`);
+            }
+          }
+
+          // Variantes alternatives depuis ce même point (siblings childrenIds[1..n])
+          if (node.childrenIds.length > 1) {
+            for (let v = 1; v < node.childrenIds.length; v++) {
+              const subTokens = serializeBranch(node.childrenIds[v], true);
+              branchTokens.push(`(${subTokens.join(' ')})`);
+            }
+          }
+
+          currId = node.childrenIds[0] ?? null;
+        }
+        return branchTokens;
+      };
+
+      if (rootNodes.length > 0) {
+        tokens.push(...serializeBranch(rootNodes[0].id, false));
+        for (let r = 1; r < rootNodes.length; r++) {
+          const altRootTokens = serializeBranch(rootNodes[r].id, true);
+          tokens.push(`(${altRootTokens.join(' ')})`);
+        }
       }
+    } else {
+      // Export linéaire classique des records
+      for (let i = 0; i < records.length; i++) {
+        const r = records[i];
+        const isWhite = r.color === 'white';
 
-      let move = r.san;
-      if (r.classification === 'blunder') move += '??';
-      else if (r.classification === 'mistake') move += '?';
-      else if (r.classification === 'inaccuracy') move += '?!';
-      tokens.push(move);
+        if (isWhite) {
+          tokens.push(`${Math.floor(r.moveNumber)}.`);
+        } else if (i === 0 || records[i - 1].color !== 'white') {
+          tokens.push(`${Math.floor(r.moveNumber)}...`);
+        }
 
-      const comments: string[] = [];
-      // `[%eval ...]` : convention Lichess, en pions du point de vue des Blancs.
-      if (r.mateAfter !== undefined) {
-        // `#0` n'est pas une notation PGN valide : un mat Â« nul Â» est omis.
-        if (r.mateAfter !== 0) {
+        let move = r.san;
+        if (r.classification === 'blunder') move += '??';
+        else if (r.classification === 'mistake') move += '?';
+        else if (r.classification === 'inaccuracy') move += '?!';
+        tokens.push(move);
+
+        const comments: string[] = [];
+        if (r.mateAfter !== undefined && r.mateAfter !== 0) {
           const whitePovMate = r.color === 'white' ? -r.mateAfter : r.mateAfter;
           comments.push(`[%eval #${whitePovMate}]`);
+        } else if (r.cpAfter !== undefined) {
+          comments.push(`[%eval ${(r.cpAfter / 100).toFixed(2)}]`);
         }
-      } else if (r.cpAfter !== undefined) {
-        comments.push(`[%eval ${(r.cpAfter / 100).toFixed(2)}]`);
-      }
 
-      if (r.classification === 'blunder' || r.classification === 'mistake' || r.classification === 'inaccuracy') {
-        const textClass = r.classification === 'blunder' ? 'Blunder' : r.classification === 'mistake' ? 'Mistake' : 'Inaccuracy';
-        const best = r.bestMove && r.bestMove !== r.playedMove ? `${r.bestMove} was best.` : '';
-        comments.push(`${textClass}. ${best}`.trim());
-      }
+        if (r.classification === 'blunder' || r.classification === 'mistake' || r.classification === 'inaccuracy') {
+          const textClass = r.classification === 'blunder' ? 'Blunder' : r.classification === 'mistake' ? 'Mistake' : 'Inaccuracy';
+          const best = r.bestMove && r.bestMove !== r.playedMove ? `${r.bestMove} was best.` : '';
+          comments.push(`${textClass}. ${best}`.trim());
+        }
 
-      if (comments.length > 0) {
-        tokens.push(`{ ${comments.join(' ')} }`);
+        if (comments.length > 0) {
+          tokens.push(`{ ${comments.join(' ')} }`);
+        }
       }
     }
 
-    // Repli Ã  ~80 colonnes, entre tokens.
+    // Repli à ~80 colonnes, entre tokens
     let line = '';
     for (const token of tokens) {
       if (line.length > 0 && line.length + token.length + 1 > 80) {
@@ -168,9 +312,6 @@ export class PgnParser {
     }
     if (line.length > 0) pgn += line + '\n';
 
-    // Le résultat doit suivre la ligne de coups SANS ligne vide : `…\n\n*\n`
-    // fait parser 2 parties par chessops (le `*` isolé est lu comme une
-    // seconde partie vide).
     pgn += '*\n';
     return pgn;
   }

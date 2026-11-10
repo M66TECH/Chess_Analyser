@@ -144,6 +144,10 @@ export class CloudEvalService {
   }
 
   private static async requestNow(fen: string, multiPv: number, origin: string) {
+    if (typeof window === 'undefined' && !origin) {
+      this.settle(fen, null);
+      return;
+    }
     try {
       const url = `${origin}/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
@@ -152,14 +156,12 @@ export class CloudEvalService {
         return;
       }
       if (!res.ok) {
-        console.error('[CloudEval] HTTP', res.status);
         this.settle(fen, null);
         return;
       }
       const hit = (await res.json()) as CloudEvalHit;
       this.settle(fen, hit);
-    } catch (error) {
-      console.error('[CloudEval] fetch failed:', error);
+    } catch {
       this.settle(fen, null);
     }
   }

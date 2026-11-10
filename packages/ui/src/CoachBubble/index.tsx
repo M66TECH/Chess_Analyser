@@ -1,7 +1,19 @@
 "use client";
 import React from 'react';
-import type { MoveRecord } from '@chess-analyzer/chess-core';
-import type { InsightKind } from '@chess-analyzer/chess-core';
+import type { MoveRecord, InsightKind, BoardShape } from '@chess-analyzer/chess-core';
+import { computeDeterministicHighlights } from '@chess-analyzer/chess-core';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faRobot,
+  faChessPawn,
+  faBullseye,
+  faTriangleExclamation,
+  faCheck,
+  faArrowRight,
+  faLightbulb,
+  faPlay,
+} from '@fortawesome/free-solid-svg-icons';
+import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
 export interface CoachBubbleProps {
   record?: MoveRecord;
@@ -12,15 +24,19 @@ export interface CoachBubbleProps {
   onShowDemo?: (record: MoveRecord) => void;
   /** `true` si une suite de coups peut être montrée pour ce record. */
   canShowDemo?: boolean;
+  /**
+   * Émet des surbrillances déterministes sur l'échiquier au survol d'une section.
+   */
+  onHoverInsight?: (shapes: BoardShape[] | null) => void;
 }
 
 /** Icône + couleur par type d'explication (les 5 axes pédagogiques). */
-const INSIGHT_STYLE: Record<InsightKind, { icon: string; label: string; color: string; ring: string }> = {
-  played_move: { icon: '♟', label: 'Ce que fait votre coup', color: 'text-slate-300', ring: 'border-slate-600/60' },
-  missed_move: { icon: '✦', label: 'Ce que vous pouviez jouer', color: 'text-amber-300', ring: 'border-amber-600/50' },
-  mistake: { icon: '⚠', label: 'Pourquoi c\'est une erreur', color: 'text-orange-300', ring: 'border-orange-600/50' },
-  good_decision: { icon: '✓', label: 'Pourquoi c\'était bien', color: 'text-emerald-300', ring: 'border-emerald-600/50' },
-  consequence: { icon: '⇢', label: 'Conséquence', color: 'text-indigo-300', ring: 'border-indigo-600/50' },
+const INSIGHT_STYLE: Record<InsightKind, { icon: IconDefinition; label: string; color: string; ring: string }> = {
+  played_move: { icon: faChessPawn, label: 'Ce que fait votre coup', color: 'text-slate-300', ring: 'border-slate-600/60' },
+  missed_move: { icon: faBullseye, label: 'Ce que vous pouviez jouer', color: 'text-amber-300', ring: 'border-amber-600/50' },
+  mistake: { icon: faTriangleExclamation, label: 'Pourquoi c\'est une erreur', color: 'text-orange-300', ring: 'border-orange-600/50' },
+  good_decision: { icon: faCheck, label: 'Pourquoi c\'était bien', color: 'text-emerald-300', ring: 'border-emerald-600/50' },
+  consequence: { icon: faArrowRight, label: 'Conséquence', color: 'text-indigo-300', ring: 'border-indigo-600/50' },
 };
 
 const CLASSIFICATION_STYLE: Record<string, { badge: string; glow: string; label: string }> = {
@@ -35,12 +51,12 @@ const CLASSIFICATION_STYLE: Record<string, { badge: string; glow: string; label:
   book: { badge: 'bg-purple-400/20 border-purple-400/50 text-purple-200', glow: '', label: 'Théorie' },
 };
 
-export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, canShowDemo = false }) => {
+export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, canShowDemo = false, onHoverInsight }) => {
   if (!record) {
     return (
       <div className="glass-panel rounded-xl p-6 w-full h-full min-h-[280px] flex flex-col items-center justify-center text-center">
         <div className="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
-          <span className="text-3xl">&#129302;</span>
+          <FontAwesomeIcon icon={faRobot} className="text-3xl text-indigo-400" />
         </div>
         <h2 className="text-xl font-bold text-slate-200 mb-2">Votre coach est prêt</h2>
         <p className="text-sm text-slate-400 max-w-sm leading-relaxed">
@@ -113,13 +129,36 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
               <p className="text-sm font-semibold text-slate-100 leading-snug">{card.headline}</p>
             )}
 
+            {/* P1-9 : transparence quand le LLM a échoué ou que le budget
+                de session est épuisé. Le joueur sait qu'il lit une explication
+                locale déterministe, pas une analyse LLM. */}
+            {card.degraded && (
+              <div className="flex items-center gap-1.5 text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-md px-2 py-1">
+                <span aria-hidden="true">&#9432;</span>
+                Explication locale de repli (moteur déterministe)
+              </div>
+            )}
+
             <div className="space-y-2">
               {card.insights.map((insight, i) => {
                 const st = INSIGHT_STYLE[insight.kind];
                 return (
-                  <div key={`${insight.kind}-${i}`} className={`border-l-2 ${st.ring} pl-2.5`}>
-                    <div className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${st.color}`}>
-                      {st.icon} {st.label}
+                  <div
+                    key={`${insight.kind}-${i}`}
+                    className={`border-l-2 ${st.ring} pl-2.5 py-1 px-1.5 rounded-r transition-colors hover:bg-slate-800/50 cursor-pointer`}
+                    onMouseEnter={() => {
+                      if (record && onHoverInsight) {
+                        const shapes = computeDeterministicHighlights(insight.kind, record);
+                        onHoverInsight(shapes);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      onHoverInsight?.(null);
+                    }}
+                  >
+                    <div className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 flex items-center gap-1.5 ${st.color}`}>
+                      <FontAwesomeIcon icon={st.icon} className="w-3 h-3 shrink-0" />
+                      <span>{st.label}</span>
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed">{insight.text}</p>
                   </div>
@@ -129,8 +168,9 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
 
             {card.takeaway && (
               <div className="mt-3 pt-3 border-t border-slate-700/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-300 mb-1">
-                  &#128161; À retenir
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-300 mb-1 flex items-center gap-1.5">
+                  <FontAwesomeIcon icon={faLightbulb} className="w-3 h-3 text-amber-400" />
+                  <span>À retenir</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">{card.takeaway}</p>
               </div>
@@ -145,8 +185,8 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
                 onClick={() => onShowDemo(record)}
                 className="mt-1 w-full px-3 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30 transition-colors flex items-center justify-center gap-2"
               >
-                <span aria-hidden="true">&#9654;</span>
-                Montrer sur l’échiquier
+                <FontAwesomeIcon icon={faPlay} className="text-xs" aria-hidden="true" />
+                <span>Montrer sur l’échiquier</span>
               </button>
             )}
           </div>

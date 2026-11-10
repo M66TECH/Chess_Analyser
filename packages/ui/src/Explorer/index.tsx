@@ -1,5 +1,7 @@
 import React from 'react';
 import type { ExplorerResult, OpeningExplorerResult, TablebaseData } from '@chess-analyzer/chess-core';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faChessPawn } from '@fortawesome/free-solid-svg-icons';
 
 export interface ExplorerMoveSelection {
   san: string;
@@ -68,7 +70,8 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
       <div className="glass-panel rounded-xl p-4 w-full h-full text-slate-200 text-sm overflow-y-auto custom-scrollbar">
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-bold text-gray-300 flex items-center gap-2">
-            <span>♟️</span> Syzygy Tablebase (7 pièces)
+            <FontAwesomeIcon icon={faChessPawn} className="text-indigo-400 w-3.5 h-3.5" />
+            <span>Syzygy Tablebase (7 pièces)</span>
           </h3>
           <span className={`font-bold capitalize ${globalStatusColor}`}>
             {d.category.replace('-', ' ')}

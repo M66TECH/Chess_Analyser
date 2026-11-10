@@ -22,5 +22,8 @@ export * from './parser/PgnParser';
 export * from './pedagogy/RiverAPI';
 export * from './pedagogy/ExplanationContext';
 export * from './pedagogy/ExplanationEngine';
+export * from './analysis/GamePhase';
+export * from './pedagogy/TolerantRetry';
+export * from './pedagogy/deterministicHighlights';
 export * from './utils/san';
 export * from './utils/evalFormat';

@@ -26,7 +26,7 @@ export class GameManager {
     this.pipeline.initialize();
   }
 
-  public playMove(uci: string): { success: boolean; nodeId?: string } {
+  public playMove(uci: string): { success: boolean; nodeId?: string; san?: string } {
     this.isNavigating = false;
     const fenBefore = this.moveManager.getFen();
     const result = this.moveManager.playMove(uci);
@@ -38,12 +38,12 @@ export class GameManager {
         move: uci, 
         nodeId: result.nodeId 
       });
-      return { success: true, nodeId: result.nodeId };
+      return { success: true, nodeId: result.nodeId, san: result.san };
     }
     return { success: false };
   }
 
-  public navigateToNode(nodeId: string | null) {
+  public async navigateToNode(nodeId: string | null) {
     if (this.moveManager.goToNode(nodeId)) {
       this.activeNodeId = nodeId;
       this.isNavigating = true;
@@ -51,6 +51,14 @@ export class GameManager {
       // On passe nodeId au lieu de moveIndex
       this.eventBus.emit('NavigateTo', { fen, nodeId });
       this.eventBus.emit('PositionChanged', { fen });
+
+      // Succession : Si déjà en cache, émettre l'évaluation sans relancer le moteur local
+      const cached = await this.pipeline.getEvalCache().get(fen);
+      if (cached && (cached.depth >= 14 || typeof cached.mate === 'number')) {
+        this.eventBus.emit('EngineEvaluationUpdated', cached);
+        return;
+      }
+
       this.engineManager.analyze(fen, 14);
     }
   }
