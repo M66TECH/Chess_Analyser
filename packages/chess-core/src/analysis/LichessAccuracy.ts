@@ -256,13 +256,15 @@ export const gameAccuracy = (
     const weight = weights[i];
     if (prev === undefined || next === undefined || weight === undefined || weight <= 0) continue;
 
-    // `Color.fromWhite((i % 2 == 0) == startColor.white)` : index pair = camp au trait.
+    // `Color.fromWhite((i % 2 == 0) == startColor.white)` : le premier coup
+    // (index pair) appartient au camp qui avait le trait.
+    // ⚠ Régression corrigée : l'ancienne forme
+    // `(i % 2 === 0) === (startColor === 'white') ? startColor : ...`
+    // attribuait le premier coup aux Blancs même quand startColor='black'
+    // (portage erroné de la formule Scala, jamais couvert par les tests
+    // antérieurs qui n'utilisaient que 'white').
     const colourAtPly: 'white' | 'black' =
-      (i % 2 === 0) === (startColor === 'white')
-        ? startColor
-        : startColor === 'white'
-          ? 'black'
-          : 'white';
+      i % 2 === 0 ? startColor : startColor === 'white' ? 'black' : 'white';
 
     // `color.fold(p, n)` : pour Blanc (before, after), pour Noir (after, before).
     const before = colourAtPly === 'white' ? prev : next;
