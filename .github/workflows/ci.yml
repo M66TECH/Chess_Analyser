@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint + Tests + Build + Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (Next build TypeScript)
+        run: npm run build --workspace web
+
+      - name: Tests (chess-core)
+        run: npm test --workspace @chess-analyzer/chess-core
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Audit (fail on high)
+        run: npm audit --audit-level=high
+        continue-on-error: true # informatif en attendant la remise a plat des vulns transitives
