@@ -87,6 +87,31 @@ export interface MoveNode {
   isMainline: boolean;
 }
 
+export interface CriticalMoment {
+  moveNumber: number;
+  color: 'white' | 'black';
+  san: string;
+  playedMove: string;
+  bestMove?: string;
+  fenBefore: string;
+  winDrop: number;
+  cpBefore: number;
+  cpAfter: number;
+  description: string;
+}
+
+export interface GameClassificationCounts {
+  brilliant: number;
+  great: number;
+  best: number;
+  excellent: number;
+  good: number;
+  inaccuracy: number;
+  mistake: number;
+  blunder: number;
+  book: number;
+}
+
 export interface GameStats {
   accuracy: { white: number; black: number };
   acpl: { white: number; black: number };
@@ -95,4 +120,15 @@ export interface GameStats {
   inaccuracies: { white: number; black: number };
   perfectDomination?: { white: boolean; black: boolean };
   queensTraded?: boolean;
+  classificationCounts?: {
+    white: GameClassificationCounts;
+    black: GameClassificationCounts;
+  };
+  phaseStats?: {
+    opening?: { white: number; black: number };
+    middlegame?: { white: number; black: number };
+    endgame?: { white: number; black: number };
+  };
+  criticalMoment?: CriticalMoment;
+  takeaway?: string;
 }

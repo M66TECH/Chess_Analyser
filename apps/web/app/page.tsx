@@ -33,6 +33,7 @@ import {
   MoveRecord,
   MoveNode,
   AccuracyScore,
+  MatchSummaryService,
   PgnParser,
   ExplanationEngine,
   buildDemo,
@@ -281,7 +282,7 @@ export default function Home() {
 
   // Stats calculation
   const stats = useMemo(() => {
-    const base = AccuracyScore.computeGameStats(records);
+    const summary = MatchSummaryService.generateSummary(records);
     // P1-8 : startColor est dérivé du PREMIER record. Un PGN au trait aux
     // Noirs inversait l'attribution de la précision entre les deux camps.
     // fenBefore[1] === 'b' = les Noirs avaient le trait au premier coup.
@@ -290,7 +291,7 @@ export default function Home() {
       firstRecord && firstRecord.fenBefore.split(' ')[1] === 'b' ? 'black' : 'white';
     const lichess = AccuracyScore.computeLichessAccuracy(records, startColor);
     return {
-      ...base,
+      ...summary,
       accuracy: {
         white: Math.round(lichess.white * 10) / 10,
         black: Math.round(lichess.black * 10) / 10,

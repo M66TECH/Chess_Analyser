@@ -9,7 +9,8 @@ import { MoveTree } from '../MoveTree';
 import { CoachBubble } from '../CoachBubble';
 import { BoardDemo } from '../BoardDemo';
 import { GameReviewModal } from '../GameReview';
-import type { MoveRecord, MoveNode, DemoStep } from '@chess-analyzer/chess-core';
+import { GameReport } from '../GameReport';
+import type { MoveRecord, MoveNode, DemoStep, GameStats } from '@chess-analyzer/chess-core';
 
 // Mock ChessBoard to avoid canvas / chessground DOM requirements in jsdom
 vi.mock('../ChessBoard', () => ({
@@ -212,6 +213,50 @@ describe('UI Components — Indispensable Suite', () => {
 
       expect(screen.getByText('Revue guidée de partie')).toBeInTheDocument();
       expect(screen.getByText('Retenter ce coup')).toBeInTheDocument();
+    });
+  });
+
+  describe('GameReport (P3.16)', () => {
+    it('affiche le bilan complet avec phases, décompte des coups et tournant décisif', () => {
+      const mockStats: GameStats = {
+        accuracy: { white: 91.5, black: 84.2 },
+        acpl: { white: 18, black: 42 },
+        inaccuracies: { white: 1, black: 3 },
+        mistakes: { white: 0, black: 2 },
+        blunders: { white: 0, black: 1 },
+        classificationCounts: {
+          white: { brilliant: 1, great: 1, best: 8, excellent: 4, good: 2, inaccuracy: 1, mistake: 0, blunder: 0, book: 2 },
+          black: { brilliant: 0, great: 0, best: 6, excellent: 2, good: 4, inaccuracy: 3, mistake: 2, blunder: 1, book: 2 },
+        },
+        phaseStats: {
+          opening: { white: 95, black: 92 },
+          middlegame: { white: 90, black: 78 },
+          endgame: { white: 88, black: 80 },
+        },
+        criticalMoment: {
+          moveNumber: 24,
+          color: 'black',
+          san: 'f6??',
+          playedMove: 'f7f6',
+          bestMove: 'e8e7',
+          fenBefore: 'r3r1k1/pp3ppp/2p5/8/8/8/PPPP1PPP/R3R1K1 b - - 0 1',
+          winDrop: 0.45,
+          cpBefore: -50,
+          cpAfter: 480,
+          description: 'Tournant du match au coup 24 : f6?? (Noirs) a coûté 45% de chances.',
+        },
+        takeaway: 'Excellente partie des Blancs avec un coup brillant décisif.',
+      };
+
+      render(<GameReport stats={mockStats} onClose={vi.fn()} />);
+
+      expect(screen.getByText('Bilan complet du match')).toBeInTheDocument();
+      expect(screen.getByText('91.5%')).toBeInTheDocument();
+      expect(screen.getByText('84.2%')).toBeInTheDocument();
+      expect(screen.getByText('Tournant décisif du match')).toBeInTheDocument();
+      expect(screen.getByText(/Tournant du match au coup 24/)).toBeInTheDocument();
+      expect(screen.getByText('Précision par Phase')).toBeInTheDocument();
+      expect(screen.getByText('Coups Brillants')).toBeInTheDocument();
     });
   });
 });
