@@ -33,3 +33,6 @@ audit .txt
 
 # Clone local de lecture (AGPL), hors du code distribue
 clone lichess/
+
+# Backend fantome supprime (P0.5) : archive dans l'historique git
+apps/api/
