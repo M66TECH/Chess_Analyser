@@ -6,11 +6,15 @@
     "dev": "nodemon -w next.config.ts -w .env.local -x \"next dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@chess-analyzer/chess-core": "*",
     "@chess-analyzer/ui": "*",
+    "@fortawesome/fontawesome-svg-core": "^6.7.2",
+    "@fortawesome/free-solid-svg-icons": "^6.7.2",
+    "@fortawesome/react-fontawesome": "^0.2.2",
     "next": "16.4.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
