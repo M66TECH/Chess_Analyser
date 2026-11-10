@@ -1,4 +1,5 @@
 import type { EngineEvaluation, EngineEvaluationSource } from '../events/GameEventBus';
+import { LocalMode } from './LocalMode';
 
 /**
  * Cloud Eval de Lichess — portage du comportement de
@@ -73,6 +74,12 @@ export class CloudEvalService {
    */
   public static fetch(fen: string, multiPv = 3, origin = typeof window !== 'undefined' ? window.location.origin : ''): Promise<EngineEvaluation[] | null> {
     if (typeof document !== 'undefined' && document.hidden) return Promise.resolve(null);
+    // P3.14 — mode local strict : le nuage est un appel réseau sortant.
+    // Le cache mémoire reste consultable.
+    if (!LocalMode.allowRemote('cloud-eval')) {
+      const cached = this.cache.get(fen);
+      return Promise.resolve(cached && cached !== AWAITING ? this.toEvaluations(cached) : null);
+    }
     if (!fen) return Promise.resolve(null);
 
     const fetched = this.cache.get(fen);

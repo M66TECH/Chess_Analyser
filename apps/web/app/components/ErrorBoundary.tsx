@@ -1,5 +1,7 @@
 "use client";
 import React, { Component, ReactNode } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
 interface Props {
   children: ReactNode;
@@ -47,7 +49,9 @@ export class ErrorBoundary extends Component<Props, State> {
             fontFamily: 'system-ui, sans-serif',
           }}
         >
-          <div style={{ fontSize: '2rem' }}>⚠️</div>
+          <div style={{ fontSize: '2rem' }}>
+            <FontAwesomeIcon icon={faTriangleExclamation} className="text-amber-400" />
+          </div>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
             Une erreur inattendue s&apos;est produite
           </h2>

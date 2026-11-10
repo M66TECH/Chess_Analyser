@@ -1,5 +1,6 @@
 import { ExplorerCache, OpeningData } from './ExplorerCache';
 import type { OpeningMove } from './ExplorerCache';
+import { LocalMode } from '../services/LocalMode';
 
 interface RawOpeningMove extends OpeningMove {
   game?: unknown;
@@ -41,6 +42,15 @@ export class OpeningExplorer {
    * `opening: null`; the ECO name is then carried by the moves themselves.
    */
   public static async fetchWithOpening(fen: string): Promise<OpeningFetchResult> {
+    // P3.14 — mode local strict : on ne sort jamais du navigateur. Le cache
+    // mémoire reste consultable (il ne contient que des réponses déjà reçues).
+    if (!LocalMode.allowRemote('opening-explorer')) {
+      const cachedLocal = this.cache.get(fen);
+      return cachedLocal
+        ? { data: cachedLocal, opening: this.openingOf(cachedLocal) }
+        : { data: null, opening: null };
+    }
+
     const cached = this.cache.get(fen);
     if (cached) {
       return { data: cached, opening: this.openingOf(cached) };

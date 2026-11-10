@@ -40,6 +40,7 @@ import {
   serializeGame,
   parseStoredGame,
   GAME_STORE_KEY,
+  LocalMode,
   type DemoStep,
 } from '@chess-analyzer/chess-core';
 import { NavigationBar } from './components/NavigationBar';
@@ -86,6 +87,7 @@ export default function Home() {
   const demoAutoPlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mobilePanel, setMobilePanel] = useState<MobilePanelTab>('coach');
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [localOnly, setLocalOnly] = useState(false);
   const [hoveredShapes, setHoveredShapes] = useState<Array<{ orig: string; dest?: string; brush: string }> | null>(null);
 
   const gmRef = useRef<GameManager | null>(null);
@@ -121,6 +123,8 @@ export default function Home() {
   // Sound state sync
   useEffect(() => {
     setSoundEnabled(SoundService.getInstance().isEnabled());
+    // P3.14 — synchronise le badge « Local/Connecté » avec la préférence persistée.
+    setLocalOnly(LocalMode.enabled);
   }, []);
 
   // --- Persistence: save / restore (schéma versionné, cf. GameStore) ---
@@ -689,6 +693,17 @@ export default function Home() {
         engineSource={evalState.source}
         soundEnabled={soundEnabled}
         onToggleSound={() => setSoundEnabled(SoundService.getInstance().toggle())}
+        localOnly={localOnly}
+        onToggleLocalOnly={() => {
+          const next = LocalMode.toggle();
+          setLocalOnly(next);
+          showNotice(
+            next
+              ? 'Mode local : plus aucun envoi vers Lichess ou le coach IA.'
+              : 'Mode connecté : ouvertures Lichess et coach IA réactivés.',
+            5000
+          );
+        }}
         onImport={() => setShowImport(true)}
         onExport={handleExportPgn}
         onReset={handleReset}

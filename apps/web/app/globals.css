@@ -67,4 +67,48 @@
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
   }
+
+  /* Protection des dimensions Chessground (évite tout étirement 800% ou pièces géantes) */
+  .cg-wrap {
+    width: 100% !important;
+    height: 100% !important;
+    position: relative !important;
+    display: block !important;
+  }
+  cg-container {
+    position: absolute !important;
+    width: 100% !important;
+    height: 100% !important;
+    top: 0 !important;
+    left: 0 !important;
+  }
+  cg-board {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .cg-wrap piece {
+    position: absolute !important;
+    width: 12.5% !important;
+    height: 12.5% !important;
+    background-size: cover !important;
+    z-index: 2;
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  /* Flèches et formes Chessground comme dans Lichess */
+  .cg-wrap svg {
+    opacity: 1 !important;
+    pointer-events: none;
+  }
+  .cg-wrap svg line {
+    stroke-linecap: round;
+  }
+  .cg-wrap svg.cg-shapes {
+    opacity: 1 !important;
+    z-index: 10;
+  }
 }
