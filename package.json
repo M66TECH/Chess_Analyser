@@ -14,7 +14,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
-    "test": "npm test --workspace @chess-analyzer/chess-core"
+    "test": "npm run test --workspaces --if-present"
   },
   "workspaces": [
     "apps/*",
@@ -22,12 +22,17 @@
   ],
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "GPL-3.0-only",
   "type": "commonjs",
   "devDependencies": {
     "@types/node": "^26.1.2",
     "turbo": "^2.10.8",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.66.0"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "7.3.1",
+    "@fortawesome/free-solid-svg-icons": "7.3.1",
+    "@fortawesome/react-fontawesome": "3.5.0"
   }
 }
