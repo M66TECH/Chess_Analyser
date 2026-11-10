@@ -119,7 +119,7 @@ describe('Page Orchestrator (Home)', () => {
 
   it('updates state upon receiving GameEventBus events', async () => {
     const { GameManager } = await import('@chess-analyzer/chess-core');
-    const MockGM = GameManager as unknown as { instances: any[] };
+    const MockGM = GameManager as unknown as { instances: Array<{ eventBus: GameEventBus }> };
 
     render(<Home />);
 

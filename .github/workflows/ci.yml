@@ -29,8 +29,8 @@ jobs:
       - name: Typecheck (Next build TypeScript)
         run: npm run build --workspace web
 
-      - name: Tests (chess-core)
-        run: npm test --workspace @chess-analyzer/chess-core
+      - name: Tests (tous les workspaces)
+        run: npm test
 
       - name: Lint
         run: npm run lint

@@ -1,0 +1,26 @@
+[
+  {
+    "file": "stockfish.js",
+    "banner": "Stockfish 2019-08-15 Multi-Variant",
+    "options": [
+      "option name Debug Log File type string default ",
+      "Contempt (spin)",
+      "option name Analysis Contempt type combo default Both var Both var Off var White var Black",
+      "Threads (spin)",
+      "Hash (spin)",
+      "option name Clear Hash type button",
+      "Ponder (check)",
+      "MultiPV (spin)",
+      "option name Skill Level type spin default 20 min 0 max 20",
+      "option name Move Overhead type spin default 30 min 0 max 5000",
+      "option name Minimum Thinking Time type spin default 20 min 0 max 5000",
+      "option name Slow Mover type spin default 84 min 10 max 1000",
+      "nodestime (spin)",
+      "UCI_Chess960 (check)",
+      "UCI_Variant (combo)",
+      "UCI_AnalyseMode (check)"
+    ],
+    "reachedDepth": 10,
+    "ok": true
+  }
+]

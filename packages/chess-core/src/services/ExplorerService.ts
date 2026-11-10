@@ -1,3 +1,5 @@
+import { LocalMode } from './LocalMode';
+
 export interface MoveStats {
   uci: string;
   san: string;
@@ -96,6 +98,9 @@ export class ExplorerService {
   }
 
   private static async fetchRemote(fen: string): Promise<ExplorerResult> {
+    // Mode local strict : aucune position ne quitte le navigateur.
+    if (!LocalMode.allowRemote('explorer-service')) return null;
+
     const pieces = this.countPieces(fen);
 
     try {

@@ -103,3 +103,25 @@ describe('LocalMode (P3.14)', () => {
     expect(llm).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('LocalMode — ExplorerService (panneau explorateur / tablebase)', () => {
+  beforeEach(() => LocalMode.reset());
+  afterEach(() => {
+    LocalMode.reset();
+    vi.restoreAllMocks();
+  });
+
+  it('ne déclenche aucun fetch ni vers /api/explorer ni vers /api/tablebase', async () => {
+    const { ExplorerService } = await import('../services/ExplorerService');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    LocalMode.enabled = true;
+
+    // 32 pièces → explorateur d'ouvertures ; 3 pièces → tablebase.
+    const opening = await ExplorerService.fetch('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 7');
+    const endgame = await ExplorerService.fetch('8/8/8/4k3/8/8/4K3/4R3 w - - 0 90');
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(opening).toBeNull();
+    expect(endgame).toBeNull();
+  });
+});

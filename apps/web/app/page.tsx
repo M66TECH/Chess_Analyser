@@ -31,6 +31,7 @@ import {
 import {
   GameManager,
   MoveRecord,
+  MoveNode,
   AccuracyScore,
   PgnParser,
   ExplanationEngine,
@@ -56,6 +57,10 @@ export default function Home() {
   const [previewFen, setPreviewFen] = useState<string | null>(null);
   const [records, setRecords] = useState<MoveRecord[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  // Copie de l'arbre de coups pour le rendu : lire `gmRef.current` pendant le
+  // rendu est interdit (ref mutable) ; on rafraîchit cet état depuis les
+  // gestionnaires d'événements du GameManager.
+  const [treeNodes, setTreeNodes] = useState<Map<string, MoveNode>>(() => new Map());
   const [lastMove, setLastMove] = useState<[string, string] | undefined>(undefined);
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
   const [notice, setNotice] = useState<string | null>(null);
@@ -122,9 +127,13 @@ export default function Home() {
 
   // Sound state sync
   useEffect(() => {
+    // Lecture de préférences navigateur (localStorage) : impossible côté
+    // serveur, donc synchronisées après l'hydratation pour éviter un écart SSR.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setSoundEnabled(SoundService.getInstance().isEnabled());
     // P3.14 — synchronise le badge « Local/Connecté » avec la préférence persistée.
     setLocalOnly(LocalMode.enabled);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   // --- Persistence: save / restore (schéma versionné, cf. GameStore) ---
@@ -198,6 +207,7 @@ export default function Home() {
     if (!gm.restoreSession(parsed.game.moves, savedRecords, parsed.game.initialFen)) return false;
 
     setRecords(gm.getMoveRecords());
+    setTreeNodes(new Map(gm.getTree().nodes));
     setActiveNodeId(gm.getActiveNodeId());
     return true;
   }, [showNotice]);
@@ -217,6 +227,7 @@ export default function Home() {
     });
 
     const unsubMove = eventBus.on('MovePlayed', ({ nodeId }) => {
+      setTreeNodes(new Map(gm.getTree().nodes));
       setActiveNodeId(nodeId);
       setHoveredShapes(null);
     });
@@ -562,6 +573,8 @@ export default function Home() {
       return;
     }
     if (demoIndex >= demo.steps.length - 1) {
+      // Fin de la démonstration : transition d'état terminale, pas de dérivation possible.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsDemoPlaying(false);
       return;
     }
@@ -680,6 +693,7 @@ export default function Home() {
     setActiveNodeId(null);
     setLastMove(undefined);
     setRecords([]);
+    setTreeNodes(new Map());
     setThreatMode(false);
     try { localStorage.removeItem(GAME_STORE_KEY); } catch {}
     showNotice('Nouvelle partie.', 3000);
@@ -871,7 +885,7 @@ export default function Home() {
             <div className={`${mobilePanel === 'moves' ? 'block' : 'hidden'} xl:block h-[380px] xl:h-[460px]`}>
               {process.env.NEXT_PUBLIC_MOVE_TREE_ENABLED === 'true' ? (
                 <MoveTree
-                  nodes={gmRef.current?.getTree().nodes ?? new Map()}
+                  nodes={treeNodes}
                   records={records}
                   activeNodeId={activeNodeId}
                   onSelectNode={handleNodeSelect}
