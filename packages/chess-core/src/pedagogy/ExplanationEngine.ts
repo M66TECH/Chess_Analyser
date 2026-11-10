@@ -1,5 +1,4 @@
 import { RiverAPI } from './RiverAPI';
-import { LocalMode } from '../services/LocalMode';
 import { uciToSan, pvToSan } from '../utils/san';
 import {
   buildExplanationContext,
@@ -257,13 +256,6 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
 
     // Budget épuisé : fallback IMMÉDIAT, sans coût réseau, avec badge.
     if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) {
-      const local = this.fallbackCard(context, level);
-      return { ...local, degraded: true };
-    }
-
-    // P3.14 — mode local strict : le coach LLM est un appel sortant, il est
-    // coupé. Le joueur conserve l'explication déterministe (badge dégradé).
-    if (!LocalMode.allowRemote('coach')) {
       const local = this.fallbackCard(context, level);
       return { ...local, degraded: true };
     }

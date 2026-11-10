@@ -66,15 +66,15 @@ test.describe('Chess Analyzer — E2E Critical Scenarios (P1.6)', () => {
     await expect(page.getByText('Bb5').first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Scénario 4: Mode Local Strict (P3.14)', async ({ page }) => {
-    const localButton = page.getByRole('button', { name: /Activer le mode local|Désactiver le mode local/i });
-    await expect(localButton).toBeVisible();
+  test('Scénario 4: Contrôle audio (Mute / Unmute)', async ({ page }) => {
+    const soundButton = page.getByRole('button', { name: /Activer les sons|Désactiver les sons/i });
+    await expect(soundButton).toBeVisible();
 
-    await localButton.click();
-    await expect(localButton).toHaveAttribute('aria-pressed', 'true');
+    await soundButton.click();
+    await expect(page.getByRole('button', { name: /Activer les sons/i })).toBeVisible();
 
-    await localButton.click();
-    await expect(localButton).toHaveAttribute('aria-pressed', 'false');
+    await soundButton.click();
+    await expect(page.getByRole('button', { name: /Désactiver les sons/i })).toBeVisible();
   });
 
   test('Scénario 5: Responsive mobile et onglets tactiles', async ({ page, isMobile }) => {

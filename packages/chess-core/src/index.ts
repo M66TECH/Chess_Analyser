@@ -32,4 +32,3 @@ export * from './pedagogy/deterministicHighlights';
 export * from './utils/san';
 export * from './utils/evalFormat';
 export * from './services/GameStore';
-export * from './services/LocalMode';

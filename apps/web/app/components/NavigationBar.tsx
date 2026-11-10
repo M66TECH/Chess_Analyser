@@ -10,7 +10,6 @@ import {
   faVolumeHigh,
   faVolumeXmark,
   faCircleQuestion,
-  faShieldHalved,
 } from '@fortawesome/free-solid-svg-icons';
 
 export interface NavigationBarProps {
@@ -19,9 +18,6 @@ export interface NavigationBarProps {
   engineSource?: 'cloud' | 'local';
   soundEnabled: boolean;
   onToggleSound: () => void;
-  /** P3.14 — mode local strict : coupe Lichess (explorateur/nuage) et le LLM. */
-  localOnly: boolean;
-  onToggleLocalOnly: () => void;
   onImport: () => void;
   onExport: () => void;
   onReset: () => void;
@@ -34,8 +30,6 @@ export function NavigationBar({
   engineSource,
   soundEnabled,
   onToggleSound,
-  localOnly,
-  onToggleLocalOnly,
   onImport,
   onExport,
   onReset,
@@ -119,26 +113,6 @@ export function NavigationBar({
         >
           <FontAwesomeIcon icon={soundEnabled ? faVolumeHigh : faVolumeXmark} className="text-xs" />
           <span className="hidden sm:inline">{soundEnabled ? 'Son' : 'Muet'}</span>
-        </button>
-
-        {/* P3.14 — Mode local strict : aucune donnée ne quitte le navigateur. */}
-        <button
-          onClick={onToggleLocalOnly}
-          aria-pressed={localOnly}
-          className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors border flex items-center gap-1.5 ${
-            localOnly
-              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-              : 'bg-slate-800/70 hover:bg-slate-700 text-slate-300 border-slate-700/50'
-          }`}
-          title={
-            localOnly
-              ? 'Mode local : rien ne quitte votre navigateur (cliquez pour réactiver le nuage et le coach IA)'
-              : 'Mode connecté : Lichess (ouvertures/nuage) et coach IA sont utilisés'
-          }
-          aria-label={localOnly ? 'Désactiver le mode local' : 'Activer le mode local'}
-        >
-          <FontAwesomeIcon icon={faShieldHalved} className="text-xs" />
-          <span className="hidden sm:inline">{localOnly ? 'Local' : 'Connecté'}</span>
         </button>
 
         <button
