@@ -1,7 +1,5 @@
 "use client";
 import React, { Component, ReactNode } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
 interface Props {
   children: ReactNode;
@@ -16,6 +14,7 @@ interface State {
 /**
  * L14 — Error Boundary React pour capturer les crashs de composants
  * sans abattre toute la page.
+ * 100% autonome et résilient sans dépendance externe à l'évaluation du module.
  */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
@@ -49,8 +48,21 @@ export class ErrorBoundary extends Component<Props, State> {
             fontFamily: 'system-ui, sans-serif',
           }}
         >
-          <div style={{ fontSize: '2rem' }}>
-            <FontAwesomeIcon icon={faTriangleExclamation} className="text-amber-400" />
+          <div style={{ color: '#f59e0b', fontSize: '2.5rem', lineHeight: 1 }}>
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
           </div>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
             Une erreur inattendue s&apos;est produite

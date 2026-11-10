@@ -5,6 +5,13 @@ import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
 const nextConfig: NextConfig = {
+  transpilePackages: [
+    '@chess-analyzer/ui',
+    '@chess-analyzer/chess-core',
+    '@fortawesome/react-fontawesome',
+    '@fortawesome/fontawesome-svg-core',
+    '@fortawesome/free-solid-svg-icons',
+  ],
   async headers() {
     return [
       {

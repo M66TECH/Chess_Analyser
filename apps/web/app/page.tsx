@@ -21,7 +21,6 @@ import {
   CoachBubble,
   PgnImportModal,
   PromotionDialog,
-  BoardDemo,
   DemoBanner,
   SoundService,
   GameReviewModal,
@@ -110,7 +109,6 @@ export default function Home() {
   const {
     evalState,
     shapes,
-    setShapes,
     threatMode,
     setThreatMode,
     showLines,
@@ -675,7 +673,12 @@ export default function Home() {
       showNotice('Analyse de la partie en cours…', 15000);
       gmRef.current.loadPgn(pgnText).then((result) => {
         if (result.success) {
-          setActiveNodeId(gmRef.current?.getActiveNodeId() ?? null);
+          const gm = gmRef.current;
+          if (gm) {
+            setRecords(gm.getMoveRecords());
+            setTreeNodes(new Map(gm.getTree().nodes));
+            setActiveNodeId(gm.getActiveNodeId());
+          }
           syncLastMoveFromBoard();
           setThreatMode(false);
           showNotice(`Partie chargée : ${result.moveCount ?? 0} coups analysés.`);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import type { GameManager, ExplorerResult } from '@chess-analyzer/chess-core';
 import { EvalNormalizer, MotifEngine, pvToShape, CloudEvalService, ExplorerService } from '@chess-analyzer/chess-core';
 import type { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';

@@ -45,7 +45,7 @@ test.describe('Chess Analyzer — E2E Critical Scenarios (P1.6)', () => {
     await expect(page.getByText('e4').first()).toBeVisible();
   });
 
-  test('Scénario 3: Importation d\'une partie PGN', async ({ page }) => {
+  test('Scénario 3: Importation d\'une partie PGN', async ({ page, isMobile }) => {
     await page.getByRole('button', { name: 'Importer PGN' }).click();
 
     const modalHeading = page.getByRole('heading', { name: /Importer une partie/i });
@@ -58,7 +58,12 @@ test.describe('Chess Analyzer — E2E Critical Scenarios (P1.6)', () => {
     await page.getByRole('button', { name: 'Analyser la partie' }).click();
 
     await expect(modalHeading).not.toBeVisible();
-    await expect(page.getByText('Bb5').first()).toBeVisible({ timeout: 7000 });
+
+    if (isMobile) {
+      await page.getByRole('button', { name: 'Coups' }).click();
+    }
+
+    await expect(page.getByText('Bb5').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('Scénario 4: Mode Local Strict (P3.14)', async ({ page }) => {
