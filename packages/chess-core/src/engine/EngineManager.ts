@@ -5,10 +5,19 @@ import {
   UCI_ENGINE_OPTIONS,
   UCI_INIT_COMMANDS,
 } from './LichessUci';
+import {
+  getRecommendedEngineConfig,
+  type EngineConfig,
+} from './EngineCapability';
 
 /**
  * Pilote Stockfish (WASM Worker) avec le protocole UCI de Lichess
  * (`lila/ui/lib/src/ceval/protocol.ts`).
+ *
+ * Sélection adaptative :
+ * - Stockfish 19 avec Relaxed SIMD si supporté par le navigateur
+ * - Stockfish 19 SmallNet standard
+ * - Repli automatique sur Stockfish 10 si environnement ancien ou restreint.
  *
  * Conventions :
  * - `EngineEvaluation.cp` / `.mate` sont toujours exprimés **du point de vue du
@@ -20,6 +29,7 @@ import {
 export class EngineManager {
   private worker: Worker | null = null;
   private isReady = false;
+  private config: EngineConfig;
 
   /** Analyse demandée avant que le moteur soit prêt (une seule, la dernière). */
   private pendingFen: string | null = null;
@@ -57,8 +67,17 @@ export class EngineManager {
 
   constructor(
     private eventBus: GameEventBus,
-    private wasmPath: string = '/stockfish/stockfish.js'
-  ) {}
+    private wasmPath?: string
+  ) {
+    this.config = getRecommendedEngineConfig();
+    if (this.wasmPath) {
+      this.config.workerPath = this.wasmPath;
+    }
+  }
+
+  public getConfig(): EngineConfig {
+    return this.config;
+  }
 
   // ---------------------------------------------------------------- lifecycle
 
@@ -66,27 +85,50 @@ export class EngineManager {
     if (typeof window === 'undefined' || this.worker) return;
 
     try {
-      this.worker = new Worker(this.wasmPath);
-      this.worker.onmessage = this.handleMessage.bind(this);
-
-      this.worker.onerror = (e: ErrorEvent) => {
-        const msg = e.message || 'Erreur inconnue du Worker Stockfish';
-        console.error('[EngineManager] Worker error:', msg);
-        this.eventBus.emit('EngineError', msg);
-      };
-
-      this.worker.onmessageerror = () => {
-        const msg = 'Erreur de décodage de message Stockfish';
-        console.error('[EngineManager]', msg);
-        this.eventBus.emit('EngineError', msg);
-      };
-
-      this.send('uci');
+      this.createWorker(this.config.workerPath, this.config.isModule && !this.wasmPath);
     } catch (err: unknown) {
+      // Si le profil moderne échoue, tenter un repli vers Stockfish 10
+      if (this.config.profile !== 'sf10-legacy') {
+        try {
+          console.warn('[EngineManager] Tentative de repli vers le profil hérité suite à:', err);
+          this.config = {
+            profile: 'sf10-legacy',
+            workerPath: '/stockfish/stockfish.js',
+            isModule: false,
+            simd: false,
+            concurrency: 1,
+            engineName: 'Stockfish 10 (Repli)',
+          };
+          this.createWorker(this.config.workerPath, false);
+          return;
+        } catch {
+          // Repli échoué, suite normale
+        }
+      }
       const msg = err instanceof Error ? err.message : 'Impossible de créer le Worker Stockfish';
       console.error('[EngineManager] Init error:', msg);
       this.eventBus.emit('EngineError', msg);
     }
+  }
+
+  private createWorker(path: string, isModule: boolean) {
+    const options: WorkerOptions | undefined = isModule ? { type: 'module' } : undefined;
+    this.worker = new Worker(path, options);
+    this.worker.onmessage = this.handleMessage.bind(this);
+
+    this.worker.onerror = (e: ErrorEvent) => {
+      const msg = e.message || 'Erreur inconnue du Worker Stockfish';
+      console.error('[EngineManager] Worker error:', msg);
+      this.eventBus.emit('EngineError', msg);
+    };
+
+    this.worker.onmessageerror = () => {
+      const msg = 'Erreur de décodage de message Stockfish';
+      console.error('[EngineManager]', msg);
+      this.eventBus.emit('EngineError', msg);
+    };
+
+    this.send('uci');
   }
 
   public terminate() {
@@ -187,7 +229,8 @@ export class EngineManager {
       this.send(command);
     }
 
-    this.send(`setoption name Threads value ${UCI_ENGINE_OPTIONS.threads}`);
+    const threads = Math.max(1, this.config.concurrency || UCI_ENGINE_OPTIONS.threads);
+    this.send(`setoption name Threads value ${threads}`);
     this.send(`setoption name Hash value ${UCI_ENGINE_OPTIONS.hash}`);
     this.send(`setoption name MultiPV value ${this.currentMultiPv}`);
 

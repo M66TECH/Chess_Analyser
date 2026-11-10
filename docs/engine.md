@@ -3,7 +3,14 @@
 Mesuré par `scripts/inspect-engine.mjs` (interrogation UCI directe, Node 22, vm).
 Résultat brut : `docs/engine-probe.json`.
 
-## Constat sur le build actif (apps/web/public/stockfish/stockfish.js)
+## Architecture adaptative Stockfish 19 (P2.11 — Implémenté)
+
+La suite de moteurs est désormais adaptative via `EngineCapability.ts` et `public/stockfish/sf-worker.js` :
+- **Stockfish 19 SmallNet Relaxed SIMD** (`sf_19_smallnet_relaxed-simd.js` + `.wasm`, ~544 Ko) : profil prioritaire pour navigateurs récents supportant WebAssembly vectoriel 128-bit et Module Workers. Gain mesuré de plus de 400 Elo par rapport au moteur historique 2019.
+- **Stockfish 19 SmallNet Standard** (`sf_19_smallnet.js` + `.wasm`, ~545 Ko) : profil actif lorsque SIMD n'est pas supporté par le CPU/moteur JS.
+- **Stockfish 10 Legacy** (`stockfish.js`, ~1.58 Mo) : repli de sécurité 100% autonome lorsque ni Module Worker ni WebAssembly moderne ne sont disponibles, ou en cas d'erreur de chargement inattendue.
+
+## Constat sur le build actif de repli (apps/web/public/stockfish/stockfish.js)
 
 - **Bannière : `Stockfish 2019-08-15 Multi-Variant`** (fork ddugovic, branche multi-variantes utilisée par Lichess à l'époque).
 - Profondeur de recherche : fonctionne (depth 10 atteinte sur `startpos`).
