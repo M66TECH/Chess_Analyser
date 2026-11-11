@@ -108,6 +108,12 @@ export class EvalCache {
     if (evaluation.depth < this.minDepth) return;
 
     const key = this.normalizeFen(fen);
+    const existing = this.memory.get(key);
+    // Garde de profondeur : ne pas écraser une évaluation plus profonde (sauf si un mat est trouvé)
+    if (existing && existing.depth > evaluation.depth && typeof evaluation.mate !== 'number') {
+      return;
+    }
+
     this.memory.set(key, evaluation);
     if (this.memory.size > 4096) {
       const oldest = this.memory.keys().next().value;

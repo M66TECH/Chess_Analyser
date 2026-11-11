@@ -2,7 +2,14 @@
 
 import { useState, useRef, useCallback, useMemo } from 'react';
 import type { GameManager, ExplorerResult } from '@chess-analyzer/chess-core';
-import { EvalNormalizer, MotifEngine, pvToShape, CloudEvalService, ExplorerService } from '@chess-analyzer/chess-core';
+import {
+  EvalNormalizer,
+  MotifEngine,
+  pvToShape,
+  CloudEvalService,
+  ExplorerService,
+  DEFAULT_TARGET_DEPTH,
+} from '@chess-analyzer/chess-core';
 import type { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -114,8 +121,8 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
         const current = gmRef.current?.moveManager.getFen();
         if (current && evals[0].fen !== current) return;
 
-        // Let Cloud Win : arrêt du moteur local si le nuage fournit une évaluation suffisante
-        if (evals[0].depth >= 14 || typeof evals[0].mate === 'number') {
+        // Let Cloud Win : arrêt du moteur local si le nuage fournit une évaluation profonde (>= 30) ou un mat
+        if (evals[0].depth >= 30 || typeof evals[0].mate === 'number') {
           gmRef.current?.engineManager.stop();
         }
 
@@ -134,7 +141,7 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
         setShapes([]);
         gmRef.current?.engineManager.analyzeThreat(fen);
       } else {
-        gmRef.current?.engineManager.analyze(fen);
+        gmRef.current?.engineManager.analyze(fen, DEFAULT_TARGET_DEPTH, undefined, true);
       }
       return next;
     });
@@ -153,7 +160,7 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
         setShapes((prevShapes) => prevShapes.filter((s) => s.brush !== 'paleBlue'));
       }
       const currentFen = gmRef.current?.moveManager.getFen();
-      if (currentFen) engine.analyze(currentFen, 14);
+      if (currentFen) engine.analyze(currentFen, DEFAULT_TARGET_DEPTH, undefined, true);
       return next;
     });
   }, [gmRef]);
@@ -162,8 +169,8 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
     if (evalState.status === 'error') return 'Erreur';
     if (evalState.status === 'idle' || evalState.depth === 0) return 'Initialisation…';
     if (evalState.source === 'cloud') return `Nuage · profondeur ${evalState.depth}`;
-    if (evalState.depth >= 14) return `Profondeur ${evalState.depth}`;
-    return `Profondeur ${evalState.depth}/14`;
+    if (evalState.depth >= DEFAULT_TARGET_DEPTH) return `Profondeur ${evalState.depth}`;
+    return `Profondeur ${evalState.depth}/${DEFAULT_TARGET_DEPTH}`;
   }, [evalState.status, evalState.depth, evalState.source]);
 
   // Hook up event listeners to game manager
@@ -199,7 +206,7 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
             mate: typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined,
             depth: evaluation.depth,
             source: evaluation.source ?? 'local',
-            status: evaluation.depth >= 14 ? 'ready' : 'analyzing',
+            status: evaluation.depth >= DEFAULT_TARGET_DEPTH ? 'ready' : 'analyzing',
           };
           scheduleEvalFlush();
         }

@@ -10,6 +10,12 @@ import {
   type EngineConfig,
 } from './EngineCapability';
 
+/** Profondeur cible de référence pour valider une analyse et générer la pédagogie. */
+export const DEFAULT_TARGET_DEPTH = 18;
+
+/** Plafond de confort pour l'analyse continue en direct sur l'échiquier. */
+export const MAX_CONTINUOUS_DEPTH = 32;
+
 /**
  * Pilote Stockfish (WASM Worker) avec le protocole UCI de Lichess
  * (`lila/ui/lib/src/ceval/protocol.ts`).
@@ -33,7 +39,7 @@ export class EngineManager {
 
   /** Analyse demandée avant que le moteur soit prêt (une seule, la dernière). */
   private pendingFen: string | null = null;
-  private pendingDepth = 18;
+  private pendingDepth = DEFAULT_TARGET_DEPTH;
 
   private isThreatMode = false;
   private currentAnalysisFen: string | null = null;
@@ -325,15 +331,18 @@ export class EngineManager {
    */
   public analyze(
     fen: string,
-    depth = 14,
-    history?: { rootFen: string; moves: string[] }
+    depth = DEFAULT_TARGET_DEPTH,
+    history?: { rootFen: string; moves: string[] },
+    continuous = false
   ) {
     this.isThreatMode = false;
     this.pendingThreat = false;
 
+    const targetDepth = continuous ? Math.max(depth, MAX_CONTINUOUS_DEPTH) : depth;
+
     if (!this.isReady || !this.worker) {
       this.pendingFen = fen;
-      this.pendingDepth = depth;
+      this.pendingDepth = targetDepth;
       this.pendingHistory = history ?? null;
       // Étiquette posée dès maintenant : une réponse tardive pour cette
       // position restera correctement attribuée.
@@ -341,7 +350,7 @@ export class EngineManager {
       return;
     }
 
-    this.startSearch(fen, depth, history, 'AnalysisStarted');
+    this.startSearch(fen, targetDepth, history, 'AnalysisStarted');
   }
 
   /**
@@ -393,7 +402,7 @@ export class EngineManager {
    * Analyse la position vue du camp adverse (mode « menaces »).
    * Le trait est inversé et l'en passant effacé, comme dans `src/ui/page.tsx`.
    */
-  public analyzeThreat(fen: string, depth = 14) {
+  public analyzeThreat(fen: string, depth = DEFAULT_TARGET_DEPTH) {
     const parts = fen.split(' ');
     if (parts.length < 2) return;
 

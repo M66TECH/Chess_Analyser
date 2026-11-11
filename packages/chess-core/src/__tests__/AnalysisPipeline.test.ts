@@ -34,7 +34,7 @@ function setup() {
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 function evaluation(overrides: Partial<EngineEvaluation>): EngineEvaluation {
-  return { depth: 14, cp: 0, pv: [], multiPv: 1, ...overrides };
+  return { depth: 18, cp: 0, pv: [], multiPv: 1, ...overrides };
 }
 
 describe('AnalysisPipeline', () => {

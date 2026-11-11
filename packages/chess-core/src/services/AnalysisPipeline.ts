@@ -1,6 +1,6 @@
 import { GameEventBus, EngineEvaluation } from '../events/GameEventBus';
 import { MoveManager } from './MoveManager';
-import { EngineManager } from '../engine/EngineManager';
+import { EngineManager, DEFAULT_TARGET_DEPTH, MAX_CONTINUOUS_DEPTH } from '../engine/EngineManager';
 import { EvalNormalizer } from '../analysis/EvalNormalizer';
 import { AccuracyScore } from '../analysis/AccuracyScore';
 import { MoveClassifier } from '../pedagogy/MoveClassifier';
@@ -39,7 +39,7 @@ export class AnalysisPipeline {
   private theoryResolved = false;
   private pedagogyDone = false;
   private warmFen: string | null = null;
-  private readonly targetDepth = 14;
+  private readonly targetDepth = DEFAULT_TARGET_DEPTH;
   /**
    * Identifiant d'import : incrémenté à chaque `analyzeGame` ET à chaque
    * `reset()`/`resetPending()`, ce qui annule proprement un import en cours
@@ -180,6 +180,15 @@ export class AnalysisPipeline {
         this.pedagogyDone = true;
         this.eventBus.emit('EngineEvaluationUpdated', cached);
         this.maybeRunPedagogy();
+        // Approfondissement continu en tâche de fond si en dessous du plafond
+        if (typeof cached.mate !== 'number' && cached.depth < MAX_CONTINUOUS_DEPTH) {
+          this.engineManager.analyze(
+            fenAfter,
+            this.targetDepth,
+            this.moveManager.getIrreversibleHistory(),
+            true
+          );
+        }
         return;
       }
 
@@ -203,11 +212,12 @@ export class AnalysisPipeline {
         })
         .catch(() => {});
 
-      // Succession 4 : Repli sur le moteur Stockfish local
+      // Succession 4 : Repli sur le moteur Stockfish local avec approfondissement continu
       this.engineManager.analyze(
         fenAfter,
         this.targetDepth,
-        this.moveManager.getIrreversibleHistory()
+        this.moveManager.getIrreversibleHistory(),
+        true
       );
     });
 
@@ -717,8 +727,8 @@ export class AnalysisPipeline {
       })
       .catch(() => {});
 
-    // Succession 4 : Fallback local Stockfish WASM
-    this.engineManager.analyze(currentFen, this.targetDepth);
+    // Succession 4 : Fallback local Stockfish WASM avec approfondissement continu
+    this.engineManager.analyze(currentFen, this.targetDepth, undefined, true);
   }
 
   public getEvalCache(): EvalCache {

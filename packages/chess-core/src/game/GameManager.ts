@@ -1,6 +1,6 @@
 import { GameEventBus } from '../events/GameEventBus';
 import { MoveManager } from '../services/MoveManager';
-import { EngineManager } from '../engine/EngineManager';
+import { EngineManager, DEFAULT_TARGET_DEPTH, MAX_CONTINUOUS_DEPTH } from '../engine/EngineManager';
 import { AnalysisPipeline } from '../services/AnalysisPipeline';
 import { PgnParser } from '../parser/PgnParser';
 import { MoveNode, MoveRecord } from '../pedagogy/types';
@@ -52,14 +52,18 @@ export class GameManager {
       this.eventBus.emit('NavigateTo', { fen, nodeId });
       this.eventBus.emit('PositionChanged', { fen });
 
-      // Succession : Si déjà en cache, émettre l'évaluation sans relancer le moteur local
+      // Succession 1 : Émission immédiate du cache pour réactivité instantanée à la navigation
       const cached = await this.pipeline.getEvalCache().get(fen);
-      if (cached && (cached.depth >= 14 || typeof cached.mate === 'number')) {
+      if (cached) {
         this.eventBus.emit('EngineEvaluationUpdated', cached);
-        return;
+        // Si c'est un mat résolu ou déjà analysé à profondeur maximale, pas besoin de relancer
+        if (typeof cached.mate === 'number' || cached.depth >= MAX_CONTINUOUS_DEPTH) {
+          return;
+        }
       }
 
-      this.engineManager.analyze(fen, 14);
+      // Succession 2 : Approfondissement continu (deepen) en tâche de fond au-delà de la cible
+      this.engineManager.analyze(fen, DEFAULT_TARGET_DEPTH, undefined, true);
     }
   }
 
@@ -135,7 +139,7 @@ export class GameManager {
     // Réinitialiser la position de départ
     const startFen = this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: startFen });
-    this.engineManager.analyze(startFen, 14);
+    this.engineManager.analyze(startFen, DEFAULT_TARGET_DEPTH, undefined, true);
   }
 
   public async loadPgn(pgnText: string): Promise<{ success: boolean; error?: string; moveCount?: number }> {
@@ -209,7 +213,7 @@ export class GameManager {
     const finalFen = this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: finalFen });
     this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.activeNodeId });
-    this.engineManager.analyze(finalFen, 14);
+    this.engineManager.analyze(finalFen, DEFAULT_TARGET_DEPTH, undefined, true);
     return true;
   }
 
