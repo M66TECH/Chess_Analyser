@@ -22,9 +22,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ChessAnalyzer — Coach IA d'échecs avancé",
-  description: "Analysez vos parties d'échecs avec Stockfish 16, détection de tactiques (fourchette, clouage), heatmap de pression, coach IA pédagogique. Dépassez votre niveau rapidement.",
-  keywords: ["échecs", "analyse", "chess", "stockfish", "coach", "IA", "lichess", "chess.com"],
+  title: "ChessAnalyzer — Coach IA d'échecs",
+  description: "Analysez vos parties d'échecs avec Stockfish 19 WASM, détection de tactiques certifiées et coach pédagogique universel.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

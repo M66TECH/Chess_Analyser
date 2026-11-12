@@ -19,6 +19,40 @@ export interface TacticalPuzzle {
   centipawnLoss: number;
 }
 
+export interface ProgressiveHints {
+  hint1: { originSquare: string; text: string };
+  hint2: { theme: string; text: string };
+  hint3: { solutionSan: string; text: string };
+}
+
+/**
+ * O18 / A31 : Génère les 3 indices progressifs pour un coup à retenter :
+ * 1. Case de départ de la pièce
+ * 2. Motif tactique
+ * 3. Solution directe
+ */
+export function getProgressiveHints(record: MoveRecord): ProgressiveHints {
+  const bestUci = record.bestMove ?? '';
+  const originSquare = bestUci.length >= 2 ? bestUci.slice(0, 2) : '?';
+  const bestSan = bestUci ? (uciToSan(record.fenBefore, bestUci) ?? bestUci) : 'inconnu';
+  const { theme, hint } = identifyTacticalTheme(record.fenBefore);
+
+  return {
+    hint1: {
+      originSquare,
+      text: `Indice 1/3 (Pièce) : La bonne pièce se situe sur la case ${originSquare.toUpperCase()}.`,
+    },
+    hint2: {
+      theme,
+      text: `Indice 2/3 (Motif) : ${theme} — ${hint}`,
+    },
+    hint3: {
+      solutionSan: bestSan,
+      text: `Indice 3/3 (Solution) : Jouez ${bestSan}.`,
+    },
+  };
+}
+
 /**
  * Détermine le motif tactique prédominant d'une position d'erreur à l'aide de MotifEngine.
  */

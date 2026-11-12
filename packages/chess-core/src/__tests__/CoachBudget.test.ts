@@ -89,4 +89,35 @@ describe('P1-9 : budget LLM de session + badge dégradé', () => {
     expect(card.degraded).toBeUndefined(); // carte locale volontaire, pas un repli
     expect(ExplanationEngine.remainingLlmBudget).toBe(40);
   });
+
+  it('generateDemoCaptions consomme le budget et bascule sur le repli déterministe si épuisé (C6)', async () => {
+    const spy = vi.spyOn(RiverAPI, 'complete').mockResolvedValue('["Le cavalier saute en f3."]');
+    
+    // Appel 1 : budget consommé
+    const captions = await ExplanationEngine.generateDemoCaptions({
+      startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      uciMoves: ['g1f3'],
+      kind: 'idea',
+      fallbackCaptions: ['Le cavalier va en f3.'],
+    });
+    expect(captions).toEqual(['Le cavalier saute en f3.']);
+    expect(ExplanationEngine.remainingLlmBudget).toBe(39);
+
+    // Consommation du reste du budget (39 appels)
+    for (let i = 0; i < 39; i++) {
+      ExplanationEngine.tryConsumeBudget();
+    }
+    expect(ExplanationEngine.remainingLlmBudget).toBe(0);
+
+    // Appel 41 : retour immédiat du fallback déterministe sans appel réseau
+    const callCountBefore = spy.mock.calls.length;
+    const fallback = await ExplanationEngine.generateDemoCaptions({
+      startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      uciMoves: ['g1f3'],
+      kind: 'idea',
+      fallbackCaptions: ['Le cavalier va en f3.'],
+    });
+    expect(spy.mock.calls.length).toBe(callCountBefore);
+    expect(fallback).toEqual(['Le cavalier va en f3.']);
+  });
 });

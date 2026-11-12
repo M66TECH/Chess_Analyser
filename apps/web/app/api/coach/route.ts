@@ -5,7 +5,8 @@ import { AIGateway } from './gateway/AIGateway';
 
 const DEFAULT_MAX_TOKENS = 1200;
 const MIN_MAX_TOKENS = 500;
-const GLOBAL_TIMEOUT_MS = 12_000;
+const GLOBAL_TIMEOUT_MS = 15_000;
+const MAX_MESSAGES = 12;
 
 // Instance unique de l'Orchestrateur IA (partage l'état du Circuit Breaker & rotation)
 const aiGateway = new AIGateway({
@@ -20,17 +21,32 @@ interface CoachRequest {
 }
 
 function isValidMessages(value: unknown): value is Array<{ role: string; content: string }> {
-  if (!Array.isArray(value) || value.length === 0) return false;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MESSAGES) return false;
   return value.every(
     m =>
       typeof m === 'object' &&
       m !== null &&
       typeof (m as { role?: unknown }).role === 'string' &&
-      typeof (m as { content?: unknown }).content === 'string'
+      typeof (m as { content?: unknown }).content === 'string' &&
+      ['user', 'assistant', 'system'].includes((m as { role: string }).role)
   );
 }
 
 export async function POST(request: Request) {
+  // C1 : Contrôle d'origine anti-abus (Origin / Host)
+  const origin = request.headers.get('origin');
+  const host = request.headers.get('host');
+  if (origin && host) {
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost !== host) {
+        return NextResponse.json({ error: 'Origin rejected' }, { status: 403 });
+      }
+    } catch {
+      return NextResponse.json({ error: 'Invalid origin header' }, { status: 403 });
+    }
+  }
+
   // 1. Rate limit par IP (Sliding Window) AVANT lecture du corps
   const rate = enforceRateLimit(request, 'coach', 40);
   if (!rate.ok) return rateLimitedResponse(rate);

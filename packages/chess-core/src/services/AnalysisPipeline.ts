@@ -52,7 +52,22 @@ export class AnalysisPipeline {
   private playerLevel: PlayerLevel = 'intermediaire';
 
   public setPlayerLevel(level: PlayerLevel): void {
+    if (this.playerLevel === level) return;
     this.playerLevel = level;
+    let updated = false;
+    for (const [, rec] of this.recordsByNodeId) {
+      if (rec.coachCard) {
+        rec.coachCard = ExplanationEngine.buildLocalCard(rec, level);
+        updated = true;
+      }
+    }
+    if (updated) {
+      this.syncMoveRecordsWithTree();
+      const last = this.moveRecords.at(-1);
+      if (last) {
+        this.eventBus.emit('PedagogyUpdated', last);
+      }
+    }
   }
 
   public getPlayerLevel(): PlayerLevel {
@@ -609,8 +624,54 @@ export class AnalysisPipeline {
     this.theoryResolved = false;
     if (nodes.length === 0) return;
 
+    this.eventBus.emit('AnalysisStarted', undefined as never);
+
+    // O5: Pré-chargement Cloud Eval par paquets de 6 positions simultanées
+    const uniqueFens = new Set<string>();
     for (const node of nodes) {
+      uniqueFens.add(node.fenBefore);
+      uniqueFens.add(node.fenAfter);
+    }
+    const fenList = Array.from(uniqueFens);
+    const BATCH_SIZE = 6;
+
+    for (let i = 0; i < fenList.length; i += BATCH_SIZE) {
       if (isCancelled()) return;
+      const batch = fenList.slice(i, i + BATCH_SIZE);
+      await Promise.allSettled(
+        batch.map(async (fen) => {
+          if (this.getTerminalEvaluation(fen)) return;
+          const cached = await this.evalCache.get(fen);
+          if (cached && (cached.depth >= this.targetDepth || typeof cached.mate === 'number')) return;
+          try {
+            const cloudEvals = await CloudEvalService.fetch(fen, 1);
+            if (cloudEvals && cloudEvals.length > 0) {
+              const cloudBest = cloudEvals[0];
+              if (cloudBest.depth >= this.targetDepth || typeof cloudBest.mate === 'number') {
+                await this.evalCache.set(fen, cloudBest);
+              }
+            }
+          } catch {
+            // Repli transparent sur l'évaluation locale ultérieure
+          }
+        })
+      );
+      this.eventBus.emit('GameAnalysisProgress', {
+        current: Math.min(i + batch.length, fenList.length),
+        total: fenList.length,
+        phase: 'cloud',
+      });
+    }
+
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index];
+      if (isCancelled()) return;
+
+      this.eventBus.emit('GameAnalysisProgress', {
+        current: index + 1,
+        total: nodes.length,
+        phase: 'pedagogy',
+      });
 
       // The pre-move evaluation is either the one cached for fenBefore or, for the
       // very first move, the one we compute right now. Never fabricate {cp: 0}.
@@ -659,6 +720,8 @@ export class AnalysisPipeline {
     this.latestEval = null;
     this.pendingTheory = undefined;
     this.theoryResolved = false;
+
+    this.eventBus.emit('AnalysisFinished', undefined as never);
   }
 
   /**

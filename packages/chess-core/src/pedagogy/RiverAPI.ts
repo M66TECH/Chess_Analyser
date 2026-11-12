@@ -24,7 +24,7 @@ export interface ChatCompletionOptions {
   timeoutMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 20_000;
 /**
  * Reasoning models spend tokens thinking before answering: a 40-token cap
  * returns an empty `content` (~300 reasoning tokens is the observed floor).

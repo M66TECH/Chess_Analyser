@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* O2 : Brancher les polices Geist exposées par layout.tsx via les variables CSS */
+@theme {
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 /*
  * Performance des surfaces : `backdrop-filter` est l'effet le plus coûteux du
  * compositeur (surtout sur mobile), et 26 éléments floutés superposés suffisent

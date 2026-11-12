@@ -71,7 +71,7 @@ function simulatePvMaterialDelta(
  * Extrait de manière 100 % déterministe les différences tactiques et
  * positionnelles entre `fenBefore` et `fenAfter` ainsi que la réfutation SAN.
  */
-function extractVerifiedTacticalFacts(record: MoveRecord): VerifiedTacticalFacts | undefined {
+export function extractVerifiedTacticalFacts(record: MoveRecord): VerifiedTacticalFacts | undefined {
   try {
     const setupAfter = parseFen(record.fenAfter).unwrap();
     const motifsBefore = MotifEngine.analyzeFen(record.fenBefore);
@@ -241,9 +241,22 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
     return Math.max(0, this.LLM_SESSION_BUDGET - this.llmCallsThisSession);
   }
 
+  /** Extraction déterministe des faits tactiques vérifiés (P0.1 & I1). */
+  public static extractTacticalFacts = extractVerifiedTacticalFacts;
+
   /** Remet le budget à zéro (tests, nouvelle session). */
   public static resetLlmBudget(): void {
     this.llmCallsThisSession = 0;
+  }
+
+  /**
+   * C6 : Tente de consommer un appel sur le budget LLM de session.
+   * Retourne true si le budget est suffisant et a été décrémenté, false sinon.
+   */
+  public static tryConsumeBudget(): boolean {
+    if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) return false;
+    this.llmCallsThisSession++;
+    return true;
   }
 
   /** Génère la fiche pédagogique d'un coup analysé (avec appel IA + fallback local). */
@@ -255,13 +268,12 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
     const context = this.buildContext(record, previousClassification);
 
     // Budget épuisé : fallback IMMÉDIAT, sans coût réseau, avec badge.
-    if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) {
+    if (!this.tryConsumeBudget()) {
       const local = this.fallbackCard(context, level);
       return { ...local, degraded: true };
     }
 
     try {
-      this.llmCallsThisSession++;
       const raw = await RiverAPI.complete(this.buildPrompt(context, level), this.SYSTEM_PROMPT, {
         temperature: 0.3,
         maxTokens: 900,
@@ -455,6 +467,9 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     const captions = [...fallbackCaptions];
 
     if (uciMoves.length === 0) return captions;
+
+    // C6 : Les démonstrations doivent également consommer le budget LLM de session
+    if (!this.tryConsumeBudget()) return captions;
 
     try {
       const raw = await RiverAPI.complete(

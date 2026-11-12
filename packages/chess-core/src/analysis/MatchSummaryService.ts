@@ -1,7 +1,8 @@
-import type { MoveRecord, GameStats, GameClassificationCounts } from '../pedagogy/types';
+import type { MoveRecord, GameStats, GameClassificationCounts, RecurrentTheme } from '../pedagogy/types';
 import { AccuracyScore } from './AccuracyScore';
 import { phaseAccuracies } from './LichessAccuracy';
 import { uciToSan } from '../utils/san';
+import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
 
 /**
  * Service de synthèse et de rapport de match global (P3.16).
@@ -123,7 +124,11 @@ export class MatchSummaryService {
       };
     }
 
-    // 4. Synthèse pédagogique globale (Takeaway)
+    // 4. Détection des motifs récurrents d'erreur (I1)
+    const recurrentThemes = this.extractRecurrentThemes(records);
+    baseStats.recurrentThemes = recurrentThemes;
+
+    // 5. Synthèse pédagogique globale (Takeaway)
     const whiteAcc = baseStats.accuracy.white;
     const blackAcc = baseStats.accuracy.black;
     const totalBlunders = baseStats.blunders.white + baseStats.blunders.black;
@@ -136,8 +141,97 @@ export class MatchSummaryService {
     } else {
       takeawayText = `Partie conclue avec une précision globale de ${whiteAcc}% pour les Blancs et ${blackAcc}% pour les Noirs.`;
     }
+
+    const priorityAdvice: string[] = [];
+    if (recurrentThemes.white.length > 0) {
+      priorityAdvice.push(`Blancs : vigilance sur ${recurrentThemes.white[0].theme.toLowerCase()} (${recurrentThemes.white[0].count} fois)`);
+    }
+    if (recurrentThemes.black.length > 0) {
+      priorityAdvice.push(`Noirs : vigilance sur ${recurrentThemes.black[0].theme.toLowerCase()} (${recurrentThemes.black[0].count} fois)`);
+    }
+    if (priorityAdvice.length > 0) {
+      takeawayText += ` ${priorityAdvice.join(' ; ')}.`;
+    }
+
     baseStats.takeaway = takeawayText;
 
     return baseStats;
+  }
+
+  /**
+   * I1: Agrégation causale des motifs récurrents d'erreur basée sur
+   * les faits tactiques certifiés (pièces en prise, clouages, séquences de mat).
+   */
+  private static extractRecurrentThemes(records: MoveRecord[]): {
+    white: RecurrentTheme[];
+    black: RecurrentTheme[];
+  } {
+    const errorClasses = new Set(['blunder', 'mistake', 'inaccuracy']);
+    const stats = {
+      white: { undefended: 0, pins: 0, tacticalLoss: 0, mateSequence: 0 },
+      black: { undefended: 0, pins: 0, tacticalLoss: 0, mateSequence: 0 },
+    };
+
+    for (const r of records) {
+      if (!errorClasses.has(r.classification)) continue;
+      const target = stats[r.color];
+      if (r.mateSequence === 'created') {
+        target.mateSequence++;
+      }
+      try {
+        const facts = ExplanationEngine.extractTacticalFacts(r);
+        if (facts) {
+          if (facts.newly_undefended_own_pieces.length > 0) {
+            target.undefended++;
+          }
+          if (facts.new_pins_against_player.length > 0) {
+            target.pins++;
+          }
+          if (facts.material_delta_in_pv < 0) {
+            target.tacticalLoss++;
+          }
+        }
+      } catch {
+        // Ignorer silencieusement si la position ne peut pas être analysée
+      }
+    }
+
+    const buildThemesForColor = (colorStats: typeof stats['white']): RecurrentTheme[] => {
+      const themes: RecurrentTheme[] = [];
+      if (colorStats.undefended >= 2) {
+        themes.push({
+          theme: 'Pièces non défendues',
+          count: colorStats.undefended,
+          description: `${colorStats.undefended} coups ont laissé des pièces en prise directe sans protection.`,
+        });
+      }
+      if (colorStats.pins >= 2) {
+        themes.push({
+          theme: 'Clouages subis',
+          count: colorStats.pins,
+          description: `${colorStats.pins} erreurs résultent de clouages tactiques non anticipés.`,
+        });
+      }
+      if (colorStats.tacticalLoss >= 2) {
+        themes.push({
+          theme: 'Pertes matérielles forcées',
+          count: colorStats.tacticalLoss,
+          description: `${colorStats.tacticalLoss} coups concèdent une perte matérielle nette dans la suite adverse.`,
+        });
+      }
+      if (colorStats.mateSequence >= 1) {
+        themes.push({
+          theme: 'Réseau de mat concédé',
+          count: colorStats.mateSequence,
+          description: 'Coup permettant un mat forcé pour l’adversaire.',
+        });
+      }
+      return themes;
+    };
+
+    return {
+      white: buildThemesForColor(stats.white),
+      black: buildThemesForColor(stats.black),
+    };
   }
 }

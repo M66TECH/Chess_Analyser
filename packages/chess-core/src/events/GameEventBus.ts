@@ -32,6 +32,12 @@ export type HeatmapData = {
   };
 };
 
+export interface GameAnalysisProgress {
+  current: number;
+  total: number;
+  phase: 'cloud' | 'local' | 'pedagogy';
+}
+
 import { MoveRecord, GameStats } from '../pedagogy/types';
 
 export type GameEvents = {
@@ -49,6 +55,7 @@ export type GameEvents = {
   AnalysisStarted: never;
   AnalysisFinished: never;
   ThreatAnalysisStarted: never;
+  GameAnalysisProgress: GameAnalysisProgress;
   // C5 — Erreur du moteur Stockfish Worker
   EngineError: string;
 };

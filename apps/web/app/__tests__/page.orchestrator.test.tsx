@@ -61,6 +61,8 @@ vi.mock('@chess-analyzer/chess-core', async (importOriginal) => {
     }
 
     public init() {}
+    public setPlayerLevel = vi.fn();
+    public getPlayerLevel = vi.fn().mockReturnValue('intermediaire');
     public terminate() {
       this.isTerminated = true;
     }

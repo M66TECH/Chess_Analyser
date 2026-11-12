@@ -357,4 +357,32 @@ describe('AnalysisPipeline', () => {
       expect(records[0].coachCard?.level).toBe('debutant');
     });
   });
+
+  describe('GameAnalysisProgress & Pré-chargement Cloud (O5)', () => {
+    it('émet GameAnalysisProgress et pré-charge le nuage lors de analyzeGame', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+      const progressEvents: any[] = [];
+      let started = false;
+      let finished = false;
+
+      eventBus.on('AnalysisStarted', () => { started = true; });
+      eventBus.on('AnalysisFinished', () => { finished = true; });
+      eventBus.on('GameAnalysisProgress', (p) => { progressEvents.push(p); });
+
+      const move = moveManager.playMove('e2e4');
+      const node = moveManager.getTree().nodes.get(move.nodeId!)!;
+
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: moveManager.getFen(), depth: 20, source: 'cloud', cp: 20, pv: ['e2e4'] }),
+      ]);
+
+      await pipeline.analyzeGame([node]);
+
+      expect(started).toBe(true);
+      expect(finished).toBe(true);
+      expect(progressEvents.length).toBeGreaterThanOrEqual(2);
+      expect(progressEvents.some((p) => p.phase === 'cloud')).toBe(true);
+      expect(progressEvents.some((p) => p.phase === 'pedagogy')).toBe(true);
+    });
+  });
 });

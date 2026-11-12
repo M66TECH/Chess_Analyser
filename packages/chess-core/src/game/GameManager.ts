@@ -4,6 +4,7 @@ import { EngineManager, DEFAULT_TARGET_DEPTH, MAX_CONTINUOUS_DEPTH } from '../en
 import { AnalysisPipeline } from '../services/AnalysisPipeline';
 import { PgnParser } from '../parser/PgnParser';
 import { MoveNode, MoveRecord } from '../pedagogy/types';
+import type { PlayerLevel } from '../pedagogy/ExplanationContext';
 
 export class GameManager {
   public eventBus: GameEventBus;
@@ -113,10 +114,6 @@ export class GameManager {
     }
   }
 
-  public flipBoard() {
-    // Will be handled at UI level
-  }
-
   public getMoveRecords() {
     return this.pipeline.getMoveRecords();
   }
@@ -127,6 +124,14 @@ export class GameManager {
 
   public getActiveNodeId() {
     return this.activeNodeId;
+  }
+
+  public setPlayerLevel(level: PlayerLevel) {
+    this.pipeline.setPlayerLevel(level);
+  }
+
+  public getPlayerLevel(): PlayerLevel {
+    return this.pipeline.getPlayerLevel();
   }
 
   public resetGame() {
@@ -143,41 +148,34 @@ export class GameManager {
   }
 
   public async loadPgn(pgnText: string): Promise<{ success: boolean; error?: string; moveCount?: number }> {
-    const result = PgnParser.parse(pgnText);
-    if (!result.success) {
-      return { success: false, error: result.error };
+    // I2 / N5 : Utiliser parseTree pour extraire l'arbre complet avec variantes (RAV)
+    const treeRes = PgnParser.parseTree(pgnText);
+    if (!treeRes.success) {
+      return { success: false, error: treeRes.error };
     }
 
-    // Reset silencieux avec le FEN personnalisé du PGN s'il est présent
-    const setupFen = result.headers['FEN'];
+    // Reset silencieux
     this.pipeline.reset();
-    this.moveManager.reset(setupFen);
     this.engineManager.reinit();
-    this.activeNodeId = null;
     this.isNavigating = false;
 
-    // Rejouer tous les coups silencieusement à partir de la position initiale du PGN.
-    const nodes: MoveNode[] = [];
-    for (const uci of result.moves) {
-      const playResult = this.moveManager.playMove(uci);
-      if (!playResult.success) {
-        console.warn(`[GameManager.loadPgn] Coup illégal à l'index ${nodes.length}: ${uci}`);
-        break;
-      }
-      const node = playResult.nodeId ? this.moveManager.getTree().nodes.get(playResult.nodeId) : null;
-      if (node) nodes.push(node);
-      this.activeNodeId = playResult.nodeId ?? this.activeNodeId;
-    }
+    // Injection de l'arbre complet (ligne principale + toutes les sous-variantes RAV)
+    this.moveManager.importTree(treeRes.nodes, treeRes.initialFen);
+
+    // Identifier les nœuds de la ligne principale pour l'analyse
+    const mainlineNodes = Array.from(treeRes.nodes.values()).filter((n) => n.isMainline);
+    const lastMainline = mainlineNodes[mainlineNodes.length - 1];
+    this.activeNodeId = lastMainline?.id ?? null;
 
     // Émettre l'événement de position finale
     const finalFen = this.moveManager.getFen();
     this.eventBus.emit('PositionChanged', { fen: finalFen });
-    this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.moveManager.getTree().currentNodeId });
+    this.eventBus.emit('NavigateTo', { fen: finalFen, nodeId: this.activeNodeId });
 
     // Analyser chaque position séquentiellement (records/coach/graphe)
-    await this.pipeline.analyzeGame(nodes);
+    await this.pipeline.analyzeGame(mainlineNodes);
 
-    return { success: true, moveCount: nodes.length };
+    return { success: true, moveCount: mainlineNodes.length };
   }
 
   /**

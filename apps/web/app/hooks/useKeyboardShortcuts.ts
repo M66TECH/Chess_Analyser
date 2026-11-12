@@ -12,8 +12,12 @@ export interface KeyboardShortcutHandlers {
   onToggleHelp: () => void;
 }
 
-export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers): void {
+export function useKeyboardShortcuts(
+  handlers: KeyboardShortcutHandlers,
+  enabled: boolean = true
+): void {
   useEffect(() => {
+    if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       // Ignore keyboard shortcuts when typing in inputs/textareas
       const target = event.target as HTMLElement | null;
@@ -63,5 +67,5 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers): void {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handlers]);
+  }, [handlers, enabled]);
 }

@@ -1,0 +1,17 @@
+{
+  "name": "ChessAnalyzer — Coach IA d'échecs",
+  "short_name": "ChessAnalyzer",
+  "description": "Analysez vos parties d'échecs avec Stockfish WASM, détection de tactiques certifiées et coach pédagogique universel.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#161512",
+  "theme_color": "#161512",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

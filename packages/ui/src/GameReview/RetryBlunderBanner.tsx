@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { MoveRecord } from '@chess-analyzer/chess-core';
-import { classifyGamePhase, uciToSan } from '@chess-analyzer/chess-core';
+import { classifyGamePhase, uciToSan, getProgressiveHints } from '@chess-analyzer/chess-core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBullseye,
@@ -34,6 +34,7 @@ export const RetryBlunderBanner: React.FC<RetryBlunderBannerProps> = ({
   onNextMoment,
   onClose,
 }) => {
+  const [hintLevel, setHintLevel] = useState<number>(0);
   const who = blunderRecord.color === 'white' ? 'Blancs' : 'Noirs';
   const phaseInfo = classifyGamePhase({
     moveNumber: blunderRecord.moveNumber,
@@ -44,6 +45,26 @@ export const RetryBlunderBanner: React.FC<RetryBlunderBannerProps> = ({
   const bestSan = blunderRecord.bestMove
     ? uciToSan(blunderRecord.fenBefore, blunderRecord.bestMove) ?? blunderRecord.bestMove
     : 'inconnu';
+
+  const hints = getProgressiveHints(blunderRecord);
+
+  const handleNextHint = () => {
+    const next = hintLevel + 1;
+    setHintLevel(next);
+    if (next >= 3) {
+      onRevealSolution();
+    }
+  };
+
+  const handleRevealAll = () => {
+    setHintLevel(3);
+    onRevealSolution();
+  };
+
+  const handleReset = () => {
+    setHintLevel(0);
+    onResetAttempt();
+  };
 
   return (
     <div
@@ -103,7 +124,7 @@ export const RetryBlunderBanner: React.FC<RetryBlunderBannerProps> = ({
 
         {status === 'failed' && (
           <button
-            onClick={onResetAttempt}
+            onClick={handleReset}
             className="text-[11px] underline hover:text-white shrink-0 font-semibold"
           >
             Réessayer
@@ -111,7 +132,25 @@ export const RetryBlunderBanner: React.FC<RetryBlunderBannerProps> = ({
         )}
       </div>
 
-      {revealed && (
+      {/* Indices progressifs (O18 / A31) */}
+      {!revealed && status !== 'success' && hintLevel > 0 && (
+        <div className="space-y-1.5 pt-0.5">
+          {hintLevel >= 1 && (
+            <div className="text-xs bg-slate-900/90 border border-indigo-500/30 rounded-lg px-3 py-1.5 text-indigo-300 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+              <span>{hints.hint1.text}</span>
+            </div>
+          )}
+          {hintLevel >= 2 && (
+            <div className="text-xs bg-slate-900/90 border border-amber-500/30 rounded-lg px-3 py-1.5 text-amber-300 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+              <span>{hints.hint2.text}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(revealed || hintLevel >= 3) && (
         <div className="text-xs bg-indigo-950/40 border border-indigo-500/30 rounded-lg p-2 text-indigo-200">
           Meilleur coup selon le moteur : <span className="font-bold font-mono text-emerald-300">{bestSan}</span>.
           La flèche verte est affichée sur l’échiquier.
@@ -120,13 +159,29 @@ export const RetryBlunderBanner: React.FC<RetryBlunderBannerProps> = ({
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-1 flex-wrap">
-        {!revealed && status !== 'success' && (
+        {!revealed && status !== 'success' && hintLevel < 3 && (
           <button
-            onClick={onRevealSolution}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex items-center gap-1.5"
+            onClick={handleNextHint}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors flex items-center gap-1.5"
+            title="Dévoiler l'indice suivant sans révéler directement le coup"
           >
             <FontAwesomeIcon icon={faLightbulb} className="text-amber-400 w-3 h-3" />
-            <span>Voir la solution</span>
+            <span>
+              {hintLevel === 0
+                ? 'Indice 1/3 (Pièce)'
+                : hintLevel === 1
+                ? 'Indice 2/3 (Motif)'
+                : 'Indice 3/3 (Solution)'}
+            </span>
+          </button>
+        )}
+
+        {!revealed && status !== 'success' && (
+          <button
+            onClick={handleRevealAll}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center gap-1.5"
+          >
+            <span>Solution directe</span>
           </button>
         )}
 

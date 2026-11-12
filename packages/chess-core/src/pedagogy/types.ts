@@ -146,6 +146,12 @@ export interface GameClassificationCounts {
   book: number;
 }
 
+export interface RecurrentTheme {
+  theme: string;
+  count: number;
+  description: string;
+}
+
 export interface GameStats {
   accuracy: { white: number; black: number };
   acpl: { white: number; black: number };
@@ -164,5 +170,9 @@ export interface GameStats {
     endgame?: { white: number; black: number };
   };
   criticalMoment?: CriticalMoment;
+  recurrentThemes?: {
+    white: RecurrentTheme[];
+    black: RecurrentTheme[];
+  };
   takeaway?: string;
 }

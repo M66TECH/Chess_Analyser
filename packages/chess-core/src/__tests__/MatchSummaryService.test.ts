@@ -99,4 +99,30 @@ describe('MatchSummaryService (P3.16)', () => {
     expect(stats.phaseStats).toBeDefined();
     expect(stats.phaseStats?.opening).toBeDefined();
   });
+
+  it('identifie les motifs récurrents d\'erreur et les intègre au bilan (I1)', () => {
+    // 2 coups avec réseau de mat concédé pour les Noirs
+    const records: MoveRecord[] = [
+      createMockRecord({
+        nodeId: 'm1',
+        moveNumber: 15,
+        color: 'black',
+        classification: 'blunder',
+        mateSequence: 'created',
+      }),
+      createMockRecord({
+        nodeId: 'm2',
+        moveNumber: 20,
+        color: 'black',
+        classification: 'blunder',
+        mateSequence: 'created',
+      }),
+    ];
+
+    const stats = MatchSummaryService.generateSummary(records);
+    expect(stats.recurrentThemes).toBeDefined();
+    expect(stats.recurrentThemes?.black.length).toBeGreaterThanOrEqual(1);
+    expect(stats.recurrentThemes?.black[0].theme).toBe('Réseau de mat concédé');
+    expect(stats.takeaway).toContain('Noirs : vigilance sur réseau de mat concédé');
+  });
 });

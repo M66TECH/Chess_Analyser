@@ -1,39 +1,37 @@
 {
   "name": "chess_analyzer",
   "version": "1.0.0",
-  "description": "",
+  "description": "Analyseur et coach pédagogique d'échecs dans le navigateur",
   "packageManager": "npm@11.6.0",
   "engines": {
     "node": ">=20"
-  },
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
   },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "npm run test --workspaces --if-present",
+    "test:p0": "npx tsx scripts/verify-v533-p0-adversarial.ts",
     "test:e2e": "npm run test:e2e --workspace web"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
-  "keywords": [],
-  "author": "",
-  "license": "GPL-3.0-only",
-  "type": "commonjs",
+  "keywords": [
+    "chess",
+    "stockfish",
+    "lichess",
+    "pedagogy",
+    "ai-coach"
+  ],
+  "author": "M66TECH",
+  "license": "AGPL-3.0-only",
   "devDependencies": {
     "@types/node": "^20",
+    "tsx": "^4.19.3",
     "turbo": "^2.10.8",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.66.0"
-  },
-  "dependencies": {
-    "@fortawesome/fontawesome-svg-core": "^6.7.2",
-    "@fortawesome/free-solid-svg-icons": "^6.7.2",
-    "@fortawesome/react-fontawesome": "^0.2.2"
   }
 }

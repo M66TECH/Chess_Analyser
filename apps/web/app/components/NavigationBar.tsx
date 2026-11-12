@@ -12,11 +12,15 @@ import {
   faCircleQuestion,
 } from '@fortawesome/free-solid-svg-icons';
 
+export type PlayerLevel = 'debutant' | 'intermediaire' | 'avance';
+
 export interface NavigationBarProps {
   depthLabel: string;
   engineStatus: 'idle' | 'analyzing' | 'ready' | 'error';
   engineSource?: 'cloud' | 'local';
   soundEnabled: boolean;
+  playerLevel?: PlayerLevel;
+  onChangePlayerLevel?: (level: PlayerLevel) => void;
   onToggleSound: () => void;
   onImport: () => void;
   onExport: () => void;
@@ -29,6 +33,8 @@ export function NavigationBar({
   engineStatus,
   engineSource,
   soundEnabled,
+  playerLevel = 'intermediaire',
+  onChangePlayerLevel,
   onToggleSound,
   onImport,
   onExport,
@@ -72,6 +78,42 @@ export function NavigationBar({
         <span className={`w-2 h-2 rounded-full ${statusDotClass}`} />
         <span className="font-mono">{depthLabel}</span>
       </div>
+
+      {/* Player Level Selector (O15) */}
+      {onChangePlayerLevel && (
+        <div
+          className="hidden md:flex items-center gap-1 bg-slate-900/80 p-1 rounded-lg border border-slate-700/50 text-xs"
+          role="radiogroup"
+          aria-label="Niveau du joueur"
+          title="Niveau du joueur pour adapter les explications pédagogiques"
+        >
+          {(
+            [
+              { id: 'debutant', label: 'Débutant' },
+              { id: 'intermediaire', label: 'Intermédiaire' },
+              { id: 'avance', label: 'Avancé' },
+            ] as const
+          ).map(({ id, label }) => {
+            const active = playerLevel === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => onChangePlayerLevel(id)}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                  active
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div className="flex items-center gap-1.5">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractPuzzlesFromGame } from '../pedagogy/PuzzleGenerator';
+import { extractPuzzlesFromGame, getProgressiveHints } from '../pedagogy/PuzzleGenerator';
 import type { MoveRecord } from '../pedagogy/types';
 
 describe('PuzzleGenerator (P3.15)', () => {
@@ -91,5 +91,24 @@ describe('PuzzleGenerator (P3.15)', () => {
       bestMove: undefined,
     });
     expect(extractPuzzlesFromGame([broken])).toEqual([]);
+  });
+
+  it('génère 3 indices progressifs (case, motif, coup masqué) pour un coup à retenter (O18/A31)', () => {
+    const record = createMockRecord({
+      nodeId: 'node-blunder-hint',
+      classification: 'blunder',
+      fenBefore: 'r1bqk2r/pp2bppp/2n1pn2/2pp4/2PP4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - 0 7',
+      playedMove: 'd4c5',
+      san: 'dxc5',
+      bestMove: 'e1g1',
+    });
+
+    const hints = getProgressiveHints(record);
+    expect(hints.hint1.originSquare).toBe('e1');
+    expect(hints.hint1.text).toContain('E1');
+    expect(hints.hint2.theme).toBeTruthy();
+    expect(hints.hint2.text).toContain(hints.hint2.theme);
+    expect(hints.hint3.solutionSan).toBe('O-O');
+    expect(hints.hint3.text).toContain('O-O');
   });
 });

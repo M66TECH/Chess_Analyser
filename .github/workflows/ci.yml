@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [develop, master]
+    branches: [develop, master, main, 'feat/*']
   pull_request:
 
 concurrency:
@@ -31,6 +31,9 @@ jobs:
 
       - name: Tests (tous les workspaces)
         run: npm test
+
+      - name: Verify P0 Adversarial Suite (Vérité Échiquéenne & L2 Evidences)
+        run: npm run test:p0
 
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps chromium

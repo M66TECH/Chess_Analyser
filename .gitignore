@@ -39,6 +39,9 @@ clone lichess/
 # Backend fantome supprime (P0.5) : archive dans l'historique git
 apps/api/
 
+# Build artifacts
+*.tsbuildinfo
+
 # Playwright
 test-results/
 playwright-report/
