@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faXmark } from '@fortawesome/free-solid-svg-icons';
-import { CoachBubble, SoundService } from '@chess-analyzer/ui';
+import { faXmark, faCircleInfo } from '@fortawesome/free-solid-svg-icons';
+import { CoachBubble, SoundService, SpeechService } from '@chess-analyzer/ui';
 import {
   GameManager,
   MoveRecord,
@@ -255,6 +255,39 @@ export default function Home() {
     gm.init();
 
     const restoreTimer = setTimeout(() => {
+      // 1. Priorité aux paramètres d'URL (partage direct de position ou partie)
+      if (typeof window !== 'undefined' && window.location.search) {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const fenParam = params.get('fen');
+          const pgnParam = params.get('pgn');
+          if (fenParam) {
+            const decodedFen = decodeURIComponent(fenParam).trim();
+            if (decodedFen) {
+              gm.resetGame(decodedFen);
+              setFen(decodedFen);
+              showNotice('Position chargée depuis le lien partagé.', 4000);
+              return;
+            }
+          } else if (pgnParam) {
+            const decodedPgn = decodeURIComponent(pgnParam).trim();
+            if (decodedPgn) {
+              showNotice('Analyse de la partie partagée en cours…', 10000);
+              gm.loadPgn(decodedPgn).then((res) => {
+                if (res.success) {
+                  setRecords(gm.getMoveRecords());
+                  setTreeNodes(new Map(gm.getTree().nodes));
+                  setActiveNodeId(gm.getActiveNodeId());
+                  showNotice('Partie chargée depuis le lien partagé.', 4000);
+                }
+              });
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Restauration de session locale si aucun paramètre URL
       if (restoreGame()) {
         syncLastMoveFromBoard();
         showNotice('Partie précédente restaurée.', 3000);
@@ -270,30 +303,6 @@ export default function Home() {
       gm.terminate();
     };
   }, [playerLevel, restoreGame, saveGameDebounced, setupEngineListeners, showNotice, syncLastMoveFromBoard]);
-
-  // Hook 2: Keyboard shortcuts
-  useKeyboardShortcuts(
-    useMemo(
-      () => ({
-        onPrev: () => gmRef.current?.navigatePrev(),
-        onNext: () => gmRef.current?.navigateNext(),
-        onFirst: () => gmRef.current?.navigateFirst(),
-        onLast: () => gmRef.current?.navigateLast(),
-        onFlipBoard: handleFlipOrientation,
-        onCloseModals: () => {
-          setShowReport(false);
-          setShowImport(false);
-          setShowHelp(false);
-          setShowGameReview(false);
-          setRetryState(null);
-          setRetryFen(null);
-        },
-        onToggleHelp: () => setShowHelp((h) => !h),
-      }),
-      [handleFlipOrientation]
-    ),
-    !demo
-  );
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -321,6 +330,62 @@ export default function Home() {
     if (activeIndex === undefined || activeIndex < 0 || activeIndex >= records.length) return undefined;
     return records[activeIndex];
   }, [records, activeIndex]);
+
+  const handleToggleSpeech = useCallback(() => {
+    if (!activeRecord || !activeRecord.coachCard) return;
+    const card = activeRecord.coachCard;
+    const parts: string[] = [];
+    if (card.headline) parts.push(card.headline);
+    for (const insight of card.insights) {
+      parts.push(insight.text);
+    }
+    if (card.takeaway) {
+      parts.push(`À retenir : ${card.takeaway}`);
+    }
+    if (parts.length > 0) {
+      SpeechService.getInstance().toggle(parts.join(' '));
+    }
+  }, [activeRecord]);
+
+  const handleSharePosition = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('pgn');
+      url.searchParams.set('fen', fen);
+      navigator.clipboard.writeText(url.toString()).then(
+        () => showNotice('Lien direct de la position copié dans le presse-papier !', 4000),
+        () => showNotice('Impossible de copier le lien dans le presse-papier.', 3000)
+      );
+    } catch {
+      showNotice('Impossible de générer le lien de partage.', 3000);
+    }
+  }, [fen, showNotice]);
+
+  // Hook 2: Keyboard shortcuts
+  useKeyboardShortcuts(
+    useMemo(
+      () => ({
+        onPrev: () => gmRef.current?.navigatePrev(),
+        onNext: () => gmRef.current?.navigateNext(),
+        onFirst: () => gmRef.current?.navigateFirst(),
+        onLast: () => gmRef.current?.navigateLast(),
+        onFlipBoard: handleFlipOrientation,
+        onCloseModals: () => {
+          setShowReport(false);
+          setShowImport(false);
+          setShowHelp(false);
+          setShowGameReview(false);
+          setRetryState(null);
+          setRetryFen(null);
+        },
+        onToggleHelp: () => setShowHelp((h) => !h),
+        onToggleSpeech: handleToggleSpeech,
+      }),
+      [handleFlipOrientation, handleToggleSpeech]
+    ),
+    !demo
+  );
 
   const handleNodeSelect = useCallback((nodeId: string) => {
     gmRef.current?.navigateToNode(nodeId);
@@ -647,9 +712,20 @@ export default function Home() {
       />
 
       {notice && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-[90%] glass-panel rounded-lg px-4 py-2.5 text-sm text-slate-200 flex items-center gap-3 shadow-2xl">
-          <span className="flex-1">{notice}</span>
-          <button onClick={() => setNotice(null)} className="text-slate-400 hover:text-white transition-colors shrink-0 p-1" aria-label="Fermer">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[92%] glass-panel rounded-xl px-4 py-3 text-sm text-slate-100 flex items-center gap-3 shadow-2xl border border-indigo-500/40"
+        >
+          <div className="w-6 h-6 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
+            <FontAwesomeIcon icon={faCircleInfo} className="w-3.5 h-3.5 text-indigo-400" />
+          </div>
+          <span className="flex-1 font-medium">{notice}</span>
+          <button
+            onClick={() => setNotice(null)}
+            className="text-slate-400 hover:text-white transition-colors shrink-0 p-1 rounded-md hover:bg-slate-800/80"
+            aria-label="Fermer la notification"
+          >
             <FontAwesomeIcon icon={faXmark} className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -711,11 +787,18 @@ export default function Home() {
             <ControlsRow
               threatMode={threatMode}
               showLines={showLines}
+              canPrev={Boolean(activeIndex !== undefined && activeIndex > 0)}
+              canNext={Boolean(activeIndex !== undefined && activeIndex < records.length - 1)}
+              onFirst={() => gmRef.current?.navigateFirst()}
+              onPrev={() => gmRef.current?.navigatePrev()}
+              onNext={() => gmRef.current?.navigateNext()}
+              onLast={() => gmRef.current?.navigateLast()}
               onStartReview={() => setShowGameReview(true)}
               onOpenReport={() => setShowReport(true)}
               onToggleThreatMode={toggleThreatMode}
               onToggleLines={toggleLines}
               onFlipBoard={handleFlipOrientation}
+              onShare={handleSharePosition}
             />
 
             <MobileNavigationTabs activePanel={mobilePanel} onSelectPanel={setMobilePanel} />

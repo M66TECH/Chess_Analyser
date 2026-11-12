@@ -134,9 +134,9 @@ export class GameManager {
     return this.pipeline.getPlayerLevel();
   }
 
-  public resetGame() {
+  public resetGame(initialFen?: string) {
     this.pipeline.reset();
-    this.moveManager.reset();
+    this.moveManager.reset(initialFen);
     this.engineManager.reinit();
     this.activeNodeId = null;
     this.isNavigating = false;

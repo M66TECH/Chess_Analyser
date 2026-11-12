@@ -10,6 +10,7 @@ export interface KeyboardShortcutHandlers {
   onFlipBoard: () => void;
   onCloseModals: () => void;
   onToggleHelp: () => void;
+  onToggleSpeech?: () => void;
 }
 
 export function useKeyboardShortcuts(
@@ -51,6 +52,11 @@ export function useKeyboardShortcuts(
         case 'F':
           event.preventDefault();
           handlers.onFlipBoard();
+          break;
+        case 'e':
+        case 'E':
+          event.preventDefault();
+          handlers.onToggleSpeech?.();
           break;
         case 'Escape':
           event.preventDefault();

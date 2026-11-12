@@ -15,6 +15,7 @@ export function HelpModal({ onClose }: HelpModalProps) {
     ['↑', 'Début de la partie'],
     ['↓', 'Fin de la partie'],
     ['F', "Retourner l'échiquier"],
+    ['E', 'Écouter / Arrêter la voix du Coach'],
     ['?', 'Ouvrir / fermer cette aide'],
     ['Esc', 'Fermer le dialogue actif'],
   ];
@@ -81,7 +82,8 @@ export function HelpModal({ onClose }: HelpModalProps) {
           <li>Les <span className="text-green-400">flèches vertes</span> indiquent le meilleur coup selon Stockfish.</li>
           <li>Les <span className="text-red-400">cercles rouges</span> signalent les pièces en prise non défendues.</li>
           <li>Les <span className="text-blue-400">cercles bleus</span> montrent les pièces clouées.</li>
-          <li>Le coach IA explique chaque coup en langage naturel.</li>
+          <li>Le coach IA explique chaque coup en langage naturel et peut le lire à voix haute (Touche E ou bouton Écouter).</li>
+          <li>Partagez n&apos;importe quelle position ou partie en copiant le lien direct avec le bouton Partager.</li>
           <li>Votre partie est sauvegardée automatiquement dans votre navigateur.</li>
         </ul>
       </div>
