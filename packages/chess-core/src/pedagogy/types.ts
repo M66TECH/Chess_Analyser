@@ -48,11 +48,45 @@ export interface MoveAnalysis {
   mateSequence?: LichessMateSequence;
 }
 
+export type TheoryStatus = 'confirmed' | 'uncertain' | 'out_of_book';
+export type TheoryConfidence = 'high' | 'medium' | 'low';
+export type MoveEvidence = 'found' | 'not_returned' | 'verified_zero' | 'no_data' | 'unavailable';
+export type TheoryEvidenceSource = 'canonical_opening' | 'master_statistics' | 'both' | 'insufficient_data';
+
+export interface MoveTheoryResult {
+  /** Statut formel de conformité théorique */
+  status: TheoryStatus;
+  /** Degré de certitude de la qualification */
+  confidence: TheoryConfidence;
+  /** Preuve matérielle constatée */
+  evidence: MoveEvidence;
+  /** Source de la qualification théorique */
+  source: TheoryEvidenceSource;
+  /** Justification explicite pour le diagnostic et le coach */
+  reason: string;
+  /** Code ECO de la position (ex: 'B90', 'C50') */
+  eco?: string;
+  /** Nom canonique complet de la variante */
+  openingName?: string;
+  /** Nombre total de parties de maîtres recensées dans la position avant le coup */
+  totalMasterGamesInPosition: number;
+  /** Nombre de parties de maîtres recensées pour le coup joué */
+  masterGamesForMove: number;
+  /** Part relative du coup joué dans cette position [0, 1] */
+  frequency: number;
+  /** Vrai si le coup prolonge explicitement une variante canonique locale */
+  isCanonicalBookMove: boolean;
+  /** Seuil de coupure N12 (volume du 12e coup retourné) */
+  cutoffGames?: number;
+  /** Numéro du demi-coup du dernier coup théorique confirmé dans la partie */
+  lastConfirmedPly?: number;
+}
+
 /**
  * Opening-database context attached to a move. Stockfish optimises for perfect
  * play; humans need the moves that are statistically sound and still practical.
  */
-export interface MoveTheory {
+export interface MoveTheory extends Partial<MoveTheoryResult> {
   /** The position belongs to a known opening (enough games in the database). */
   inBook: boolean;
   /** ECO code of the opening reached, e.g. "B00". */
