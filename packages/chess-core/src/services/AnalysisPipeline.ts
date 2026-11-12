@@ -462,14 +462,19 @@ export class AnalysisPipeline {
       ? EvalNormalizer.winningChancesDiff(normCpBefore, normCpAfter, color)
       : 0;
 
-    // Best move from BEFORE the move (un coup qui réalise l'échec et mat `#`
-    // est par définition optimal, même si plusieurs mats en 1 existaient).
-    const bestMove = isCheckmateMove
+    // Best move from BEFORE the move :
+    // Un coup qui porte l'échec et mat '#' sur l'adversaire est optimal (mat direct),
+    // à condition que le joueur ne subissait pas lui-même un mat forcé déjà inévitable (Cas 3).
+    const isActualCheckmateDelivered = isCheckmateMove && (!evalBefore?.mate || evalBefore.mate > 0);
+    const bestMove = isActualCheckmateDelivered
       ? uci
       : evalBefore && evalBefore.pv.length > 0
         ? evalBefore.pv[0]
         : undefined;
-    const isBestMove = isCheckmateMove || (!!bestMove && bestMove === uci);
+
+    const isBestMove = Boolean(
+      isActualCheckmateDelivered || (bestMove && bestMove === uci)
+    );
 
     // Calcul de l'écart entre PV1 et PV2 sur fenBefore (si disponible)
     let multiPvGap: number | undefined;

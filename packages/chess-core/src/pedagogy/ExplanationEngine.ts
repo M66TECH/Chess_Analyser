@@ -13,10 +13,10 @@ import { MotifEngine } from './MotifEngine';
 import { describeMove } from './MoveNarrator';
 import type { MoveRecord } from './types';
 
-import { parseFen } from 'chessops/fen';
+import { parseFen, makeFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
-import { makeSquare, parseUci } from 'chessops/util';
+import { makeSquare, parseSquare, parseUci } from 'chessops/util';
 import type { Role } from 'chessops/types';
 
 const ROLE_VALUE: Record<Role, number> = {
@@ -172,6 +172,18 @@ export function extractVerifiedTacticalFacts(record: MoveRecord): VerifiedTactic
     };
   } catch {
     return undefined;
+  }
+}
+
+function checkPieceExistsOnSquare(fen: string, role: Role, squareStr: string): boolean {
+  try {
+    const setup = parseFen(fen).unwrap();
+    const sq = parseSquare(squareStr);
+    if (sq === undefined) return false;
+    const piece = setup.board.get(sq);
+    return piece !== undefined && piece.role === role;
+  } catch {
+    return false;
   }
 }
 
@@ -539,9 +551,16 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
   }
 
   /**
-   * P0.1 : Contrôle de cohérence factuelle avec VerifiedTacticalFacts et ExplanationContext.
-   * Rejette toute affirmation de pièce en prise / indéfendue, clouage ou mat
-   * absente des faits certifiés par le moteur et la géométrie de l'échiquier.
+   * P0.1 & Audit de Fiabilité : Contrôle exhaustif de cohérence factuelle avec VerifiedTacticalFacts et ExplanationContext.
+   * Vérifie et rejette :
+   *  1. Pièces en prise / indéfendues non prouvées
+   *  2. Clouages absents
+   *  3. Mats ou séquences de mat non certifiés
+   *  4. Fourchettes / doubles attaques inventées
+   *  5. Recommandations de coups alternatifs non concordants avec Stockfish
+   *  6. Affirmations d'évaluation en contradiction avec les chiffres réels
+   *  7. Pièces ou cases citées absentes de l'échiquier réel
+   *  8. Incohérences de camp / couleur
    */
   public static verifyCardFactualConsistency(
     card: Omit<CoachCard, 'level'> | CoachCard,
@@ -551,15 +570,15 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     const fullText = [
       card.headline,
       card.takeaway,
-      ...card.insights.map(i => i.text),
+      ...card.insights.map((i) => i.text),
     ].join(' ');
 
-    // Normalisation Unicode sans accents pour des détections de frontières de mots (\b) 100 % fiables
+    // Normalisation Unicode sans accents pour des détections fiables
     const norm = fullText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
     // 1. Contrôle des affirmations de pièce en prise / indéfendue / non protégée
     const claimsHanging =
-      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (une|votre|la) piece)\b/i.test(norm);
+      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (?:une|votre|la) piece)\b/i.test(norm);
 
     if (claimsHanging) {
       const hasHangingFact =
@@ -608,6 +627,165 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         return {
           isValid: false,
           reason: 'Affirmation de mat sans mat ou séquence de mat certifiée.',
+        };
+      }
+    }
+
+    // Résolution FEN résultante pour contrôles géométriques stricts
+    let fenAfter = context.tactical_facts?.fen_after;
+    if (!fenAfter) {
+      try {
+        const setup = parseFen(context.fen_before).unwrap();
+        const pos = Chess.fromSetup(setup).unwrap();
+        const m = parseUci(context.played.uci);
+        if (m && pos.isLegal(m)) {
+          pos.play(m);
+          fenAfter = makeFen(pos.toSetup());
+        }
+      } catch {}
+    }
+
+    // 4. Contrôle des affirmations de fourchette / attaque double
+    const claimsFork = /\b(fourchette|fourche|attaque double)\b/i.test(norm);
+    if (claimsFork) {
+      let hasForkFact = false;
+      try {
+        const motifsBefore = MotifEngine.analyzeFen(context.fen_before);
+        const motifsAfter = fenAfter ? MotifEngine.analyzeFen(fenAfter) : null;
+        if (
+          (motifsBefore && motifsBefore.forks.length > 0) ||
+          (motifsAfter && motifsAfter.forks.length > 0)
+        ) {
+          hasForkFact = true;
+        }
+      } catch {}
+
+      if (!hasForkFact) {
+        return {
+          isValid: false,
+          reason: 'Affirmation de fourchette ou attaque double sans fait tactique certifié.',
+        };
+      }
+    }
+
+    // 5. Contrôle des recommandations de coup alternatif (« Vous devriez jouer X », « Il fallait jouer X »)
+    const recommendationMatch = norm.match(
+      /\b(?:vous devriez jouer|il fallait jouer|le meilleur coup (?:etait|est)|preferez|mieux valait)\s+([a-z0-9#+=-]+)/i
+    );
+    if (recommendationMatch && context.best) {
+      const suggestedMoveRaw = recommendationMatch[1].replace(/[+#=]/g, '').trim().toLowerCase();
+      const bestSanRaw = (context.best.san ?? '').replace(/[+#=]/g, '').trim().toLowerCase();
+      const bestUciRaw = (context.best.uci ?? '').toLowerCase();
+      const firstPvSan =
+        context.best.pv_san && context.best.pv_san[0]
+          ? context.best.pv_san[0].replace(/[+#=]/g, '').trim().toLowerCase()
+          : '';
+
+      if (suggestedMoveRaw.length >= 2) {
+        const matchesBest =
+          Boolean(bestSanRaw && suggestedMoveRaw === bestSanRaw) ||
+          Boolean(bestUciRaw && suggestedMoveRaw === bestUciRaw) ||
+          Boolean(firstPvSan && suggestedMoveRaw === firstPvSan) ||
+          (Boolean(bestSanRaw) && bestSanRaw.includes(suggestedMoveRaw)) ||
+          (Boolean(bestUciRaw) && bestUciRaw.includes(suggestedMoveRaw));
+
+        if (!matchesBest) {
+          return {
+            isValid: false,
+            reason: `Recommandation d'un coup alternatif ("${suggestedMoveRaw}") qui ne correspond pas au meilleur coup calculé (${context.best.san ?? 'meilleur coup inconnu'}).`,
+          };
+        }
+      }
+    }
+
+    // 6. Contrôle des affirmations d'évaluation (position équilibrée vs déséquilibrée)
+    const claimsBalanced =
+      /\b(position est equilibree|partie est egale|parfaitement egal|position nulle|egalite parfaite)\b/i.test(norm);
+    if (claimsBalanced) {
+      const cpAfter = context.evaluation.after;
+      const isActuallyBalanced =
+        context.evaluation.mate_after === null &&
+        cpAfter !== null &&
+        Math.abs(cpAfter) <= 150;
+      if (!isActuallyBalanced) {
+        const displayScore =
+          cpAfter !== null
+            ? `${cpAfter > 0 ? '+' : ''}${(cpAfter / 100).toFixed(1)} pions`
+            : 'mat';
+        return {
+          isValid: false,
+          reason: `Affirmation de position équilibrée contredite par l'évaluation réelle (${displayScore}).`,
+        };
+      }
+    }
+
+    // 7. Contrôle d'existence et de statut des pièces et cases citées
+    const pieceSquareRegex = /\b(tour|cavalier|fou|dame|roi|pion)\s+(?:en\s+)?([a-h][1-8])\b/gi;
+    let match: RegExpExecArray | null;
+
+    const roleMap: Record<string, Role> = {
+      pion: 'pawn',
+      cavalier: 'knight',
+      fou: 'bishop',
+      tour: 'rook',
+      dame: 'queen',
+      roi: 'king',
+    };
+
+    while ((match = pieceSquareRegex.exec(norm)) !== null) {
+      const pieceNameFr = match[1];
+      const squareStr = match[2];
+      const expectedRole = roleMap[pieceNameFr];
+
+      if (expectedRole) {
+        const existsBefore = checkPieceExistsOnSquare(context.fen_before, expectedRole, squareStr);
+        const existsAfter = fenAfter ? checkPieceExistsOnSquare(fenAfter, expectedRole, squareStr) : false;
+
+        if (!existsBefore && !existsAfter) {
+          return {
+            isValid: false,
+            reason: `Affirmation hallucinatoire : aucun(e) ${pieceNameFr} sur la case ${squareStr} sur l'échiquier.`,
+          };
+        }
+
+        const contextAround = norm.substring(
+          Math.max(0, match.index - 40),
+          Math.min(norm.length, match.index + 60)
+        );
+        const claimsThreatened = /\b(prise|prend|attaqu|capture|indefendu|menac)/i.test(contextAround);
+        if (claimsThreatened && facts) {
+          const playedFrom = context.played.uci.slice(0, 2);
+          const playedTo = context.played.uci.slice(2, 4);
+          const isSquareInFacts =
+            facts.newly_undefended_own_pieces.some((p) => p.square === squareStr) ||
+            facts.newly_undefended_enemy_pieces.some((p) => p.square === squareStr) ||
+            playedTo === squareStr ||
+            playedFrom === squareStr;
+
+          if (!isSquareInFacts && !context.played.captured) {
+            return {
+              isValid: false,
+              reason: `Affirmation de pièce menacée ou attaquée sur la case ${squareStr} absente des faits tactiques certifiés.`,
+            };
+          }
+        }
+      }
+    }
+
+    // 8. Contrôle de cohérence de couleur du camp qui a joué
+    const playedColor = context.played.color;
+    if (playedColor === 'white') {
+      if (/\b(les noirs jouent|coup des noirs|les noirs ont joue)\b/i.test(norm)) {
+        return {
+          isValid: false,
+          reason: 'Incohérence sur la couleur : mention des Noirs pour un coup joué par les Blancs.',
+        };
+      }
+    } else {
+      if (/\b(les blancs jouent|coup des blancs|les blancs ont joue)\b/i.test(norm)) {
+        return {
+          isValid: false,
+          reason: 'Incohérence sur la couleur : mention des Blancs pour un coup joué par les Noirs.',
         };
       }
     }

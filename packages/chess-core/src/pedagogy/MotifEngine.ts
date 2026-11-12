@@ -33,6 +33,12 @@ export interface Checkable {
   check: NormalMove;
 }
 
+export interface Fork {
+  forkerSquare: Square;
+  forkerRole: Role;
+  targets: Array<{ square: Square; role: Role }>;
+}
+
 export interface PositionalFeatures {
   doubledPawns: { white: string[]; black: string[] };
   isolatedPawns: { white: string[]; black: string[] };
@@ -46,6 +52,7 @@ export interface FullBoardMotifs {
   undefended: Undefended[];
   checkable: Checkable[];
   positional: PositionalFeatures;
+  forks: Fork[];
 }
 
 const values: Record<Role, number> = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 100 };
@@ -299,6 +306,53 @@ export class MotifEngine {
   }
 
   /**
+   * Détecte les fourchettes tactiques (attaques doubles simultanées sur au moins deux pièces adverses).
+   */
+  public static detectForks(board: Board, targetSquare?: Square): Fork[] {
+    const forks: Fork[] = [];
+    const cb = board;
+    const squaresToCheck =
+      targetSquare !== undefined
+        ? [targetSquare]
+        : Array.from({ length: 64 }, (_, i) => i as Square);
+
+    for (const sq of squaresToCheck) {
+      const piece = cb.get(sq);
+      if (!piece || piece.role === 'king') continue;
+
+      const oppColor = opposite(piece.color);
+      const enemyPieces = cb[oppColor];
+      const attackedSquares = attacks(piece, sq, cb.occupied);
+      const targetsSet = attackedSquares.intersect(enemyPieces);
+
+      const targets: Array<{ square: Square; role: Role }> = [];
+      for (const tSq of targetsSet) {
+        const targetPiece = cb.get(tSq);
+        if (!targetPiece) continue;
+
+        const isWorthwhile =
+          targetPiece.role === 'king' ||
+          values[targetPiece.role] >= values[piece.role] ||
+          !isSquareAttacked(tSq, oppColor, cb);
+
+        if (isWorthwhile) {
+          targets.push({ square: tSq, role: targetPiece.role });
+        }
+      }
+
+      if (targets.length >= 2) {
+        forks.push({
+          forkerSquare: sq,
+          forkerRole: piece.role,
+          targets,
+        });
+      }
+    }
+
+    return forks;
+  }
+
+  /**
    * Extrait de manière 100 % déterministe la structure de pions, le
    * développement et l'ouverture des colonnes près du roi.
    */
@@ -403,6 +457,7 @@ export class MotifEngine {
         undefended: this.detectUndefended(setup.board, setup.epSquare),
         checkable: this.detectCheckable(setup.board, setup.epSquare, setup.castlingRights),
         positional: this.detectPositionalFeatures(setup.board),
+        forks: this.detectForks(setup.board),
       };
     } catch {
       return null;

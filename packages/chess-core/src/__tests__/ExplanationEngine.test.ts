@@ -357,6 +357,70 @@ describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
     expect(res.reason).toContain('mat');
   });
 
+  it('rejette une affirmation inventée de fourchette sans double attaque certifiée', () => {
+    const card = {
+      headline: 'Attaque',
+      insights: [{ kind: 'mistake' as const, text: 'Cette fourchette gagne votre dame.' }],
+      takeaway: 'Évitez les fourchettes.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('fourchette');
+  });
+
+  it('rejette une recommandation de coup alternatif non alignée avec Stockfish', () => {
+    const card = {
+      headline: 'Mauvais choix',
+      insights: [{ kind: 'mistake' as const, text: 'Vous devriez jouer Dxh5 pour attaquer.' }],
+      takeaway: 'Jouez actif.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('Recommandation');
+  });
+
+  it('rejette une affirmation de position équilibrée quand l’évaluation est déséquilibrée', () => {
+    const unbalCtx = {
+      ...dummyCtx,
+      evaluation: {
+        ...dummyCtx.evaluation,
+        after: -350, // -3.5 pions !
+      },
+    };
+    const card = {
+      headline: 'Calme',
+      insights: [{ kind: 'played_move' as const, text: 'La position est équilibrée et sans danger.' }],
+      takeaway: 'Continuez.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, unbalCtx.tactical_facts, unbalCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('position équilibrée');
+  });
+
+  it('rejette une pièce citée absente de la case sur l’échiquier', () => {
+    // Il n'y a pas de tour en a4 sur la position initiale ni après e4
+    const card = {
+      headline: 'Erreur',
+      insights: [{ kind: 'mistake' as const, text: 'Votre tour en a4 est mal placée.' }],
+      takeaway: 'Replacez-la.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('Affirmation hallucinatoire');
+  });
+
+  it('rejette une incohérence de camp / couleur', () => {
+    // dummyCtx a played.color = 'white'
+    const card = {
+      headline: 'Action',
+      insights: [{ kind: 'played_move' as const, text: 'Les noirs jouent ce coup pour attaquer.' }],
+      takeaway: 'Soyez vigilant.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('couleur');
+  });
+
   it('generateCard bascule sur le fallback local en mode dégradé lors d\'une hallucination LLM (P0.1)', async () => {
     vi.spyOn(RiverAPI, 'complete').mockResolvedValue(
       '{"headline":"Grave erreur","insights":[{"kind":"mistake","text":"Votre tour est en prise et sans défense."}],"takeaway":"Protégez votre tour."}'

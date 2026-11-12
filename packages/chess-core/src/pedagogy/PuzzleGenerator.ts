@@ -32,8 +32,8 @@ export interface ProgressiveHints {
  * 3. Solution directe
  */
 export function getProgressiveHints(record: MoveRecord): ProgressiveHints {
-  const bestUci = record.bestMove ?? '';
-  const originSquare = bestUci.length >= 2 ? bestUci.slice(0, 2) : '?';
+  const bestUci = record.bestMove ?? (record.bestPv && record.bestPv.length > 0 ? record.bestPv[0] : '') ?? '';
+  const originSquare = bestUci.length >= 2 ? bestUci.slice(0, 2) : (record.playedMove ? record.playedMove.slice(0, 2) : '?');
   const bestSan = bestUci ? (uciToSan(record.fenBefore, bestUci) ?? bestUci) : 'inconnu';
   const { theme, hint } = identifyTacticalTheme(record.fenBefore);
 
@@ -71,6 +71,13 @@ function identifyTacticalTheme(fenBefore: string): { theme: string; hint: string
         return {
           theme: 'Clouage tactique',
           hint: 'Une pièce adverse est clouée. Exploitez son manque de mobilité !',
+        };
+      }
+
+      if (motifs.forks && motifs.forks.length > 0) {
+        return {
+          theme: 'Fourchette tactique / Double attaque',
+          hint: 'Une opportunité d’attaque double est possible. Visez deux cibles en un seul coup !',
         };
       }
 
