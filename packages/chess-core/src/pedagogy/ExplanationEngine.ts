@@ -266,16 +266,29 @@ kinds autorisés : played_move, missed_move, mistake, good_decision, consequence
         temperature: 0.3,
         maxTokens: 900,
       });
+
+      if (raw.startsWith('Le coach') || raw.startsWith('Impossible') || raw.startsWith('Analyse non disponible')) {
+        console.info('[ExplanationEngine] Passerelle LLM indisponible, bascule sur la fiche pédagogique déterministe (mode dégradé).');
+        const local = this.fallbackCard(context, level);
+        return { ...local, degraded: true };
+      }
+
       const parsed = this.parseCard(raw);
 
       if (parsed && isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
-        // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
-        // n'est pas nécessaire : carte LLM complète, non dégradée.
-        return applyMoodLimits({ ...parsed, level }, context);
+        // P0.1 : Contrôle de cohérence factuelle avec VerifiedTacticalFacts
+        const consistency = ExplanationEngine.verifyCardFactualConsistency(parsed, context.tactical_facts, context);
+        if (consistency.isValid) {
+          // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
+          // n'est pas nécessaire : carte LLM complète, non dégradée.
+          return applyMoodLimits({ ...parsed, level }, context);
+        }
+        console.warn(`[ExplanationEngine] Fiche LLM rejetée pour incohérence factuelle (${consistency.reason}), bascule sur fallback local.`);
+      } else {
+        // Réponse non française ou unparseable : fallback avec badge.
+        console.warn('[ExplanationEngine] Réponse LLM invalide ou non française, fallback local avec badge.');
       }
 
-      // Réponse non française ou unparseable : fallback avec badge.
-      console.error('[ExplanationEngine] Réponse LLM rejetée, fallback local avec badge.');
       const local = this.fallbackCard(context, level);
       return { ...local, degraded: true };
     } catch (error) {
@@ -508,6 +521,83 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     if (headline.length === 0 && insights.length === 0 && takeaway.length === 0) return null;
 
     return { headline, insights, takeaway };
+  }
+
+  /**
+   * P0.1 : Contrôle de cohérence factuelle avec VerifiedTacticalFacts et ExplanationContext.
+   * Rejette toute affirmation de pièce en prise / indéfendue, clouage ou mat
+   * absente des faits certifiés par le moteur et la géométrie de l'échiquier.
+   */
+  public static verifyCardFactualConsistency(
+    card: Omit<CoachCard, 'level'> | CoachCard,
+    facts: VerifiedTacticalFacts | undefined,
+    context: ExplanationContext
+  ): { isValid: boolean; reason?: string } {
+    const fullText = [
+      card.headline,
+      card.takeaway,
+      ...card.insights.map(i => i.text),
+    ].join(' ');
+
+    // Normalisation Unicode sans accents pour des détections de frontières de mots (\b) 100 % fiables
+    const norm = fullText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+    // 1. Contrôle des affirmations de pièce en prise / indéfendue / non protégée
+    const claimsHanging =
+      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (une|votre|la) piece)\b/i.test(norm);
+
+    if (claimsHanging) {
+      const hasHangingFact =
+        (facts && (
+          facts.newly_undefended_own_pieces.length > 0 ||
+          facts.newly_undefended_enemy_pieces.length > 0 ||
+          facts.material_delta_in_pv < 0
+        )) ||
+        Boolean(context.played.captured);
+
+      if (!hasHangingFact) {
+        return {
+          isValid: false,
+          reason: 'Affirmation de pièce en prise ou indéfendue sans fait tactique certifié.',
+        };
+      }
+    }
+
+    // 2. Contrôle des affirmations de clouage
+    const claimsPin = /\b(clouage|cloue|clouee|cloues|clouees)\b/i.test(norm);
+    if (claimsPin) {
+      const hasPinFact =
+        facts &&
+        (facts.new_pins_against_player.length > 0 || facts.new_pins_by_player.length > 0);
+
+      if (!hasPinFact) {
+        return {
+          isValid: false,
+          reason: 'Affirmation de clouage sans clouage certifié dans les faits.',
+        };
+      }
+    }
+
+    // 3. Contrôle des affirmations de mat (échec et mat / mat inévitable)
+    const claimsMate =
+      /\b(echec et mat|fait mat|livre mat|est mat\b|vous matez|mat inevitable|mat imparable|va vous mater|se faire mater|menace de mat)\b/i.test(norm);
+
+    if (claimsMate) {
+      const hasMateFact =
+        context.played.is_mate ||
+        context.context.mate_sequence !== null ||
+        context.evaluation.mate_before !== null ||
+        context.evaluation.mate_after !== null;
+
+      if (!hasMateFact) {
+        return {
+          isValid: false,
+          reason: 'Affirmation de mat sans mat ou séquence de mat certifiée.',
+        };
+      }
+    }
+
+    return { isValid: true };
   }
 
   /**

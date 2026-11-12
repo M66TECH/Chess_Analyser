@@ -73,7 +73,6 @@ export class MoveClassifier {
         ? { isBestMove: isBestMoveOrOptions }
         : isBestMoveOrOptions;
     const isBestMove = options.isBestMove ?? false;
-    const isTheory = options.isTheory ?? false;
     const prevScore = options.prevScore;
     const nextScore = options.nextScore;
 
@@ -99,10 +98,6 @@ export class MoveClassifier {
 
       if (faultJudgment) {
         mateSequence = advised?.mateSequence;
-        if (isTheory) {
-          // La théorie humaine protège contre les jugements négatifs
-          return mateSequence ? { classification: 'good', accuracy, mateSequence } : { classification: 'good', accuracy };
-        }
         return mateSequence
           ? { classification: faultJudgment, accuracy, mateSequence }
           : { classification: faultJudgment, accuracy };

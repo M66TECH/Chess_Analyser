@@ -4,9 +4,10 @@
  * unknown model...). Keep the order in sync with RIVER_MODELS in .env.example.
  */
 export const COACH_MODELS = [
-  'zai-org/GLM-5.3-Flash',
-  'nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4',
-  'deepseek-ai/DeepSeek-V4.1-Flash-1017',
+  'qwen/qwen3.8-27b',
+  'deepseek-v4.1-flash:free',
+  'openai/gpt-oss-120b',
+  'openrouter/free',
 ] as const;
 
 export type CoachModel = (typeof COACH_MODELS)[number];

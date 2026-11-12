@@ -6,10 +6,11 @@ import { AccuracyScore } from '../analysis/AccuracyScore';
 import { MoveClassifier } from '../pedagogy/MoveClassifier';
 import { EvalCache } from '../cache/EvalCache';
 import { OpeningExplorer } from '../explorer/OpeningExplorer';
-import { OpeningBook } from '../explorer/OpeningBook';
+import { TheoryDetector } from '../explorer/TheoryDetector';
 import type { OpeningData } from '../explorer/ExplorerCache';
 import { MoveRecord, MoveNode, MoveTheory } from '../pedagogy/types';
 import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
+import type { PlayerLevel } from '../pedagogy/ExplanationContext';
 import { CloudEvalService } from './CloudEvalService';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -38,6 +39,8 @@ export class AnalysisPipeline {
   private pendingTheory: MoveTheory | undefined = undefined;
   private theoryResolved = false;
   private pedagogyDone = false;
+  private lastConfirmedTheoryPly?: number;
+  private theoryUiTimeout: ReturnType<typeof setTimeout> | null = null;
   private warmFen: string | null = null;
   private readonly targetDepth = DEFAULT_TARGET_DEPTH;
   /**
@@ -46,6 +49,15 @@ export class AnalysisPipeline {
    * (sinon deux imports concurrents s'écrasent mutuellement).
    */
   private importRunId = 0;
+  private playerLevel: PlayerLevel = 'intermediaire';
+
+  public setPlayerLevel(level: PlayerLevel): void {
+    this.playerLevel = level;
+  }
+
+  public getPlayerLevel(): PlayerLevel {
+    return this.playerLevel;
+  }
 
   constructor(
     private eventBus: GameEventBus,
@@ -141,6 +153,10 @@ export class AnalysisPipeline {
       // where the played move has to be measured against human theory.
       this.pendingTheory = undefined;
       this.theoryResolved = false;
+      if (this.theoryUiTimeout) {
+        clearTimeout(this.theoryUiTimeout);
+        this.theoryUiTimeout = null;
+      }
       const theoryPromise = OpeningExplorer.fetchWithOpening(fenBefore)
         .catch(() => ({ data: null as OpeningData | null, opening: null as { eco: string; name: string } | null }))
         .then(({ data, opening }) => {
@@ -152,7 +168,13 @@ export class AnalysisPipeline {
           if (pending && pending.fenAfter === fenAfter) {
             this.pendingTheory = this.buildTheory(nodeUci, fenBefore, data, opening);
             this.theoryResolved = true;
-            this.maybeRunPedagogy();
+            if (this.theoryUiTimeout) {
+              clearTimeout(this.theoryUiTimeout);
+              this.theoryUiTimeout = null;
+            }
+            if (this.pedagogyDone && this.latestEval && this.latestEval.fen === fenAfter) {
+              this.runPedagogy(this.latestEval, true);
+            }
           }
         });
 
@@ -317,8 +339,25 @@ export class AnalysisPipeline {
     if (!this.pedagogyDone || !latest) return;
     if (this.pendingMove && latest.fen !== this.pendingMove.fenAfter) return;
 
-    // Wait for the theory lookup only while it is genuinely in flight.
-    if (!this.theoryResolved) return;
+    // Si la recherche théorique est encore en cours, on attend au maximum 1500 ms
+    // pour ne pas bloquer l'affichage immédiat de l'évaluation du moteur.
+    if (!this.theoryResolved) {
+      if (!this.theoryUiTimeout) {
+        this.theoryUiTimeout = setTimeout(() => {
+          this.theoryUiTimeout = null;
+          if (this.pedagogyDone && !this.theoryResolved && this.pendingMove && this.latestEval) {
+            // Publication sans théorie : le diagnostic sera complété dès réception de l'API
+            this.runPedagogy(this.latestEval);
+          }
+        }, 1500);
+      }
+      return;
+    }
+
+    if (this.theoryUiTimeout) {
+      clearTimeout(this.theoryUiTimeout);
+      this.theoryUiTimeout = null;
+    }
 
     this.runPedagogy(latest);
   }
@@ -328,26 +367,28 @@ export class AnalysisPipeline {
     fenBefore: string,
     data: OpeningData | null,
     opening: { eco: string; name: string } | null
-  ): MoveTheory | undefined {
-    if (!data) return undefined;
+  ): MoveTheory {
+    const detection = TheoryDetector.detect({
+      fen: fenBefore,
+      uci,
+      data,
+      opening,
+      lastConfirmedPly: this.lastConfirmedTheoryPly,
+    });
 
-    const ranked = OpeningBook.rank(fenBefore, data, fenBefore.split(' ')[1] === 'b' ? 'black' : 'white');
-    if (ranked.length === 0) return undefined;
-
-    const played = ranked.find(m => m.uci === uci);
-    const best = ranked[0];
-
-    // Consider a move theory when it is the main human choice or close enough
-    // in popularity to the main line (e.g. equally played transpositions).
-    const isTheory = !!played && played.frequency >= best.frequency * 0.5;
+    if (detection.status === 'confirmed' && this.pendingMove) {
+      const ply =
+        this.pendingMove.color === 'white'
+          ? this.pendingMove.moveNumber * 2 - 1
+          : this.pendingMove.moveNumber * 2;
+      this.lastConfirmedTheoryPly = ply;
+    }
 
     return {
-      inBook: true,
-      eco: opening?.eco,
-      openingName: opening?.name,
-      frequency: played?.frequency,
-      games: played?.games,
-      isTheory,
+      ...detection,
+      inBook: detection.status === 'confirmed',
+      isTheory: detection.status === 'confirmed',
+      games: detection.masterGamesForMove,
     };
   }
 
@@ -504,7 +545,7 @@ export class AnalysisPipeline {
     const previous = this.moveRecords.at(-1);
     analysis.coachCard = ExplanationEngine.buildLocalCard(
       analysis,
-      'intermediaire',
+      this.playerLevel,
       previous?.classification ?? null
     );
 
@@ -528,7 +569,7 @@ export class AnalysisPipeline {
     // Lors d'un import PGN massif (`isBulkImport`), on ne sature pas `/api/coach`
     // avec 80 requêtes LLM parallèles : la fiche locale enrichie suffit.
     if (!isBulkImport) {
-      ExplanationEngine.generateCard(analysis, 'intermediaire', previous?.classification ?? null)
+      ExplanationEngine.generateCard(analysis, this.playerLevel, previous?.classification ?? null)
         .then(card => {
           analysis.coachCard = card;
           if (this.pendingMove?.nodeId === nodeId || this.moveRecords.at(-1)?.nodeId === nodeId) {
@@ -766,6 +807,11 @@ export class AnalysisPipeline {
     this.pendingTheory = undefined;
     this.theoryResolved = false;
     this.pedagogyDone = false;
+    this.lastConfirmedTheoryPly = undefined;
+    if (this.theoryUiTimeout) {
+      clearTimeout(this.theoryUiTimeout);
+      this.theoryUiTimeout = null;
+    }
     this.warmFen = null;
   }
 

@@ -76,6 +76,9 @@ export class MatchSummaryService {
       if (cls in target) {
         target[cls as keyof GameClassificationCounts]++;
       }
+      if (cls !== 'book' && (r.theory?.status === 'confirmed' || r.theory?.isTheory)) {
+        target.book++;
+      }
     }
     baseStats.classificationCounts = counts;
 

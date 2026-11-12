@@ -1,3 +1,5 @@
+import { Chess } from 'chessops/chess';
+import { parseFen } from 'chessops/fen';
 import type { MoveRecord } from './types';
 
 /**
@@ -231,6 +233,23 @@ export function buildExplanationContext({
           : record.mateAfter
       : null;
 
+  // P0.2 : Source de vérité = position résultante calculée, et non regex sur SAN.
+  let isCheck = false;
+  let isMate = false;
+  try {
+    if (record.fenAfter) {
+      const posAfter = Chess.fromSetup(parseFen(record.fenAfter).unwrap()).unwrap();
+      isCheck = posAfter.isCheck();
+      isMate = posAfter.isCheckmate();
+    } else {
+      isCheck = /[+#]$/.test(record.san);
+      isMate = record.san.endsWith('#');
+    }
+  } catch {
+    isCheck = /[+#]$/.test(record.san);
+    isMate = record.san.endsWith('#');
+  }
+
   const ctx: ExplanationContext = {
     fen_before: record.fenBefore,
     played: {
@@ -239,8 +258,8 @@ export function buildExplanationContext({
       color: record.color,
       piece: playedPiece,
       captured: capturedPiece ?? null,
-      is_check: /[+#]$/.test(record.san),
-      is_mate: record.san.endsWith('#'),
+      is_check: isCheck,
+      is_mate: isMate,
     },
     best: record.bestMove
       ? {

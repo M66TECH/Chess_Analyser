@@ -35,7 +35,8 @@ export class PgnParser {
     }
 
     try {
-      const games = parsePgn(pgn);
+      const normalizedPgn = PgnParser.normalizeFrenchPgn(pgn);
+      const games = parsePgn(normalizedPgn);
       if (!games || games.length === 0) {
         return { success: false, headers: {}, initialFen: '', nodes: new Map(), mainlineMoves: [], error: 'Aucune partie trouvée dans le PGN' };
       }
@@ -83,7 +84,13 @@ export class PgnParser {
 
           const branchPos = currentPos.clone();
           try {
-            const move = parseSan(branchPos, san);
+            let move = parseSan(branchPos, san);
+            if (!move) {
+              const altSan = PgnParser.convertFrenchSanToInternational(san);
+              if (altSan !== san) {
+                move = parseSan(branchPos, altSan);
+              }
+            }
             if (!move) continue;
 
             const uci = makeUci(move);
@@ -314,5 +321,69 @@ export class PgnParser {
 
     pgn += '*\n';
     return pgn;
+  }
+
+  /**
+   * P0.4 : Normalise un texte PGN pour convertir la notation échiquéenne française
+   * en notation internationale standard (FIDE/PGN standard).
+   *
+   * Règles :
+   * - Pièces : C -> N, F -> B, T -> R, D -> Q
+   * - Roi : R -> K si le texte contient par ailleurs des marqueurs français indubitables (C, F, T, D)
+   * - Promotions : =D -> =Q, =C -> =N, =F -> =B, =T -> =R
+   * - Préserve les en-têtes [Key "Value"] et les commentaires { ... } / ; ...
+   */
+  public static normalizeFrenchPgn(pgn: string): string {
+    const bodyWithoutHeadersOrComments = pgn
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/\{[^\}]*\}/g, ' ')
+      .replace(/;[^\n]*/g, ' ');
+
+    const hasFrenchMarkers = /\b[CFTD][a-h1-8x=+#-]|=[CFTD]\b/.test(bodyWithoutHeadersOrComments);
+    if (!hasFrenchMarkers) {
+      return pgn;
+    }
+
+    return pgn.replace(
+      /(\[[^\]]*\]|\{[^\}]*\}|;[^\n]*)|(\b[a-h][1-8]?x?[a-h][1-8](?:=[CFTD])?[+#]?|\b[a-h][1-8]=[CFTD][+#]?|\b[CFTDR][a-h1-8x=+#-]+)/g,
+      (match, nonMove, moveToken) => {
+        if (nonMove) return nonMove;
+        if (!moveToken) return match;
+
+        let converted = moveToken;
+        if (/^C/.test(converted)) converted = 'N' + converted.slice(1);
+        else if (/^F/.test(converted)) converted = 'B' + converted.slice(1);
+        else if (/^T/.test(converted)) converted = 'R' + converted.slice(1);
+        else if (/^D/.test(converted)) converted = 'Q' + converted.slice(1);
+        else if (/^R/.test(converted)) converted = 'K' + converted.slice(1);
+
+        converted = converted
+          .replace(/=D/g, '=Q')
+          .replace(/=C/g, '=N')
+          .replace(/=F/g, '=B')
+          .replace(/=T/g, '=R');
+
+        return converted;
+      }
+    );
+  }
+
+  /**
+   * P0.4 : Convertit un coup SAN individuel de la notation française vers la notation internationale.
+   */
+  public static convertFrenchSanToInternational(san: string): string {
+    if (!san) return san;
+    let converted = san;
+    if (/^C/.test(converted)) converted = 'N' + converted.slice(1);
+    else if (/^F/.test(converted)) converted = 'B' + converted.slice(1);
+    else if (/^T/.test(converted)) converted = 'R' + converted.slice(1);
+    else if (/^D/.test(converted)) converted = 'Q' + converted.slice(1);
+    else if (/^R/.test(converted)) converted = 'K' + converted.slice(1);
+
+    return converted
+      .replace(/=D/g, '=Q')
+      .replace(/=C/g, '=N')
+      .replace(/=F/g, '=B')
+      .replace(/=T/g, '=R');
   }
 }
