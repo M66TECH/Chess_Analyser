@@ -324,4 +324,37 @@ describe('AnalysisPipeline', () => {
     // Le moteur local n'a pas eu besoin d'être appelé pour ces positions car le nuage a répondu immédiatement
     expect(engine.requested.length).toBe(engineAnalyzeCallsBefore);
   });
+
+  describe('playerLevel configurable (P0.3)', () => {
+    it('initialise par défaut au niveau intermédiaire', () => {
+      const { pipeline } = setup();
+      expect(pipeline.getPlayerLevel()).toBe('intermediaire');
+    });
+
+    it('permet de configurer et modifier dynamiquement le niveau du joueur', () => {
+      const { pipeline } = setup();
+      pipeline.setPlayerLevel('debutant');
+      expect(pipeline.getPlayerLevel()).toBe('debutant');
+
+      pipeline.setPlayerLevel('avance');
+      expect(pipeline.getPlayerLevel()).toBe('avance');
+    });
+
+    it('utilise le playerLevel configuré lors de la génération de la coachCard', async () => {
+      const { moveManager, pipeline } = setup();
+      pipeline.setPlayerLevel('debutant');
+
+      const move = moveManager.playMove('e2e4');
+      const node = moveManager.getTree().nodes.get(move.nodeId!)!;
+
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: moveManager.getFen(), depth: 20, source: 'cloud', cp: 20, pv: ['e2e4'] }),
+      ]);
+
+      await pipeline.analyzeGame([node]);
+      const records = pipeline.getMoveRecords();
+      expect(records).toHaveLength(1);
+      expect(records[0].coachCard?.level).toBe('debutant');
+    });
+  });
 });

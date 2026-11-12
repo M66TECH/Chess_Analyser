@@ -92,9 +92,20 @@ describe('ExplanationContext', () => {
       expect(ctx.best?.centipawn_gap).toBe(70);
     });
 
-    it('détecte l\'échec depuis la notation SAN', () => {
-      const ctx = buildExplanationContext({ record: record({ san: 'Qh5+' }) });
-      expect(ctx.played.is_check).toBe(true);
+    it('détecte l\'échec et le mat depuis la position résultante calculée (P0.2)', () => {
+      // 1. Position en échec réel calculée sur fenAfter (même sans '+' dans le SAN)
+      const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/5PPq/8/PPPPP2P/RNBQKBNR w KQkq - 1 3';
+      const ctxCheck = buildExplanationContext({
+        record: record({ fenAfter: foolsMateFen, san: 'Qh4' }),
+      });
+      expect(ctxCheck.played.is_check).toBe(true);
+      expect(ctxCheck.played.is_mate).toBe(true);
+
+      // 2. Si fenAfter est indisponible, repli gracieux sur le SAN
+      const ctxFallback = buildExplanationContext({
+        record: record({ fenAfter: '', san: 'Qh5+' }),
+      });
+      expect(ctxFallback.played.is_check).toBe(true);
     });
 
     it('transmet la théorie Lichess sans la déformer', () => {
@@ -288,5 +299,72 @@ describe('ExplanationEngine.generateCard', () => {
     // l'échiquier via le bouton « Montrer sur l''échiquier ».
     expect(card.insights.some(i => i.kind === 'consequence')).toBe(false);
     expect(card.takeaway.length).toBeGreaterThan(0);
+  });
+});
+
+describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
+  const dummyCtx = buildExplanationContext({
+    record: record({
+      fenBefore: START,
+      fenAfter: AFTER_E4,
+      playedMove: 'e2e4',
+      san: 'e4',
+      classification: 'best',
+    }),
+    playedPiece: 'pion',
+  });
+
+  it('valide une carte factuellement cohérente', () => {
+    const card = {
+      headline: 'Bon coup',
+      insights: [{ kind: 'played_move' as const, text: 'Votre pion prend le centre.' }],
+      takeaway: 'Continuez.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(true);
+  });
+
+  it('rejette une affirmation inventée de pièce en prise (P0.1)', () => {
+    const card = {
+      headline: 'Erreur',
+      insights: [{ kind: 'mistake' as const, text: 'Votre dame est en prise et sans défense.' }],
+      takeaway: 'Attention.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('pièce en prise');
+  });
+
+  it('rejette une affirmation inventée de clouage (P0.1)', () => {
+    const card = {
+      headline: 'Problème',
+      insights: [{ kind: 'mistake' as const, text: 'Ce clouage vous fait perdre du matériel.' }],
+      takeaway: 'Déclouez.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('clouage');
+  });
+
+  it('rejette une affirmation inventée de mat (P0.1)', () => {
+    const card = {
+      headline: 'Échec et mat',
+      insights: [{ kind: 'mistake' as const, text: 'Vous allez vous faire mater immédiatement.' }],
+      takeaway: 'Paradez le mat.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('mat');
+  });
+
+  it('generateCard bascule sur le fallback local en mode dégradé lors d\'une hallucination LLM (P0.1)', async () => {
+    vi.spyOn(RiverAPI, 'complete').mockResolvedValue(
+      '{"headline":"Grave erreur","insights":[{"kind":"mistake","text":"Votre tour est en prise et sans défense."}],"takeaway":"Protégez votre tour."}'
+    );
+    const card = await ExplanationEngine.generateCard(record({ classification: 'good' }));
+    expect(card.degraded).toBe(true);
+    // Le texte ne contient pas l\'affirmation hallucinée mais le repli certifié
+    expect(card.headline).toBe('Bon coup');
+    expect(card.insights[0].text).not.toContain('Votre tour est en prise');
   });
 });

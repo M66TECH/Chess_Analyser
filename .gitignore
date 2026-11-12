@@ -30,6 +30,8 @@ audit .txt
 # Secrets locaux (ne jamais committer)
 *.pem
 *.key
+.revoked-keys.json
+benchmark-results.json
 
 # Clone local de lecture (AGPL), hors du code distribue
 clone lichess/
