@@ -165,6 +165,41 @@ describe('UI Components — Indispensable Suite', () => {
       fireEvent.click(demoBtn);
       expect(onShowDemo).toHaveBeenCalledWith(recordWithCoach);
     });
+
+    it('permet de déclencher la lecture audio du texte du coach', () => {
+      const mockSpeak = vi.fn();
+      const mockSynth = {
+        speak: mockSpeak,
+        cancel: vi.fn(),
+        pause: vi.fn(),
+        resume: vi.fn(),
+        getVoices: () => [{ name: 'Google français', lang: 'fr-FR', default: true }],
+      };
+      (window as unknown as { speechSynthesis: unknown }).speechSynthesis = mockSynth;
+      class MockUtterance {
+        text: string;
+        constructor(text: string) {
+          this.text = text;
+        }
+      }
+      (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = MockUtterance;
+
+      const recordWithCoach: MoveRecord = {
+        ...sampleRecords[0],
+        coachCard: {
+          headline: 'Développement du pion roi',
+          insights: [{ kind: 'played_move', text: 'Prend le centre.' }],
+          takeaway: 'Contrôler le centre.',
+        },
+      };
+
+      render(<CoachBubble record={recordWithCoach} />);
+      const listenBtn = screen.getByRole('button', { name: /Écouter l'analyse vocale/i });
+      expect(listenBtn).toBeInTheDocument();
+
+      fireEvent.click(listenBtn);
+      expect(mockSpeak).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('BoardDemo', () => {

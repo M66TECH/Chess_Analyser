@@ -12,5 +12,6 @@ export * from './BoardDemo';
 export * from './GameReview';
 export * from './MoveTree';
 export * from './sound/SoundService';
+export * from './sound/SpeechService';
 export * from './icons';
 
