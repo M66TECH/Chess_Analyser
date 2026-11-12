@@ -125,4 +125,25 @@ describe('MatchSummaryService (P3.16)', () => {
     expect(stats.recurrentThemes?.black[0].theme).toBe('Réseau de mat concédé');
     expect(stats.takeaway).toContain('Noirs : vigilance sur réseau de mat concédé');
   });
+
+  it('convertit correctement l’échelle [-1, 1] des chances de gain et évite undefined sur bestMove manquant', () => {
+    const records: MoveRecord[] = [
+      createMockRecord({
+        nodeId: 'm1',
+        moveNumber: 12,
+        color: 'white',
+        san: 'Dh5??',
+        classification: 'blunder',
+        winProbBefore: 0.4,
+        winProbAfter: -0.6,
+        bestMove: undefined,
+      }),
+    ];
+
+    const stats = MatchSummaryService.generateSummary(records);
+    expect(stats.criticalMoment).toBeDefined();
+    expect(Math.round((stats.criticalMoment?.winDrop ?? 0) * 100)).toBe(50);
+    expect(stats.criticalMoment?.description).toContain('50%');
+    expect(stats.criticalMoment?.description).not.toContain('undefined');
+  });
 });

@@ -691,18 +691,38 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
 
     // 5. Contrôle des recommandations de coup alternatif (canoniques et non-canoniques, G1)
     const recRegexes = [
-      /\b(?:vous devriez jouer|il fallait jouer|le meilleur coup (?:etait|est)|preferez|mieux valait)\s+([a-z0-9#+=-]+)/i,
-      /\b([a-z0-9#+=-]+)\s+(?:est|etait|serait)\s+(?:une\s+)?(?:bonne|meilleure|excellente)\s+idee/i,
-      /\b(?:jouer|en jouant)\s+([a-z0-9#+=-]+)\s+(?:etait|serait|permettait)/i,
-      /\bavec\s+([a-z0-9#+=-]+)\s*,?\s*vous\s+(?:pouviez|aviez|gardiez)/i,
+      /\b(?:vous devriez jouer|il fallait jouer|le meilleur coup (?:etait|est)|preferez|mieux valait)\s+([a-z0-9#+=!?-]+)/i,
+      /\b([a-z0-9#+=!?-]+)\s+(?:est|etait|serait)\s+(?:une\s+)?(?:bonne|meilleure|excellente)\s+idee/i,
+      /\b(?:jouer|en jouant)\s+([a-z0-9#+=!?-]+)\s+(?:etait|serait|permettait)/i,
+      /\bavec\s+([a-z0-9#+=!?-]+)\s*,?\s*vous\s+(?:pouviez|aviez|gardiez)/i,
     ];
 
+    const isLikelyChessMoveToken = (token: string): boolean =>
+      /^(?:[o0]-[o0](?:-[o0])?|[rdtfckqbn]?[a-h]?[1-8]?x?[a-h][1-8](?:=[rdtfckqn])?)$/.test(token);
+
+    const normalizeSanToken = (raw: string): string => {
+      let cleaned = raw.replace(/[+#!?]+/g, '').trim();
+      cleaned = cleaned.replace(/^([DCFTR])/, (_, p: string) => {
+        const map: Record<string, string> = { D: 'Q', C: 'N', F: 'B', T: 'R', R: 'K' };
+        return map[p] ?? p;
+      });
+      cleaned = cleaned.replace(/=([DCFTR])/i, (_, p: string) => {
+        const map: Record<string, string> = { d: 'q', c: 'n', f: 'b', t: 'r', r: 'k' };
+        return '=' + (map[p.toLowerCase()] ?? p.toLowerCase());
+      });
+      return cleaned.toLowerCase();
+    };
+
+    const fullNormOrig = fullText.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     let suggestedMoveRaw: string | null = null;
     for (const r of recRegexes) {
-      const m = norm.match(r);
+      const m = fullNormOrig.match(r);
       if (m && m[1]) {
-        suggestedMoveRaw = m[1].replace(/[+#=]/g, '').trim().toLowerCase();
-        break;
+        const candidateLower = m[1].replace(/[+#!?]+/g, '').replace(/=.*$/, '').trim().toLowerCase();
+        if (isLikelyChessMoveToken(candidateLower)) {
+          suggestedMoveRaw = normalizeSanToken(m[1]);
+          break;
+        }
       }
     }
 
@@ -713,13 +733,14 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         context.best.pv_san && context.best.pv_san[0]
           ? context.best.pv_san[0].replace(/[+#=]/g, '').trim().toLowerCase()
           : '';
+      const suggestedComparable = suggestedMoveRaw.replace(/=/g, '');
 
       const matchesBest =
-        Boolean(bestSanRaw && suggestedMoveRaw === bestSanRaw) ||
-        Boolean(bestUciRaw && suggestedMoveRaw === bestUciRaw) ||
-        Boolean(firstPvSan && suggestedMoveRaw === firstPvSan) ||
-        (Boolean(bestSanRaw) && bestSanRaw.includes(suggestedMoveRaw)) ||
-        (Boolean(bestUciRaw) && bestUciRaw.includes(suggestedMoveRaw));
+        Boolean(bestSanRaw && suggestedComparable === bestSanRaw) ||
+        Boolean(bestUciRaw && suggestedComparable === bestUciRaw) ||
+        Boolean(firstPvSan && suggestedComparable === firstPvSan) ||
+        (Boolean(bestSanRaw) && bestSanRaw.includes(suggestedComparable)) ||
+        (Boolean(bestUciRaw) && bestUciRaw.includes(suggestedComparable));
 
       if (!matchesBest) {
         return {
@@ -839,15 +860,23 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
 
     // G3 : Contrôle géométrique de menace directe (« pièce A menace pièce B »)
     const threatRegex =
-      /\b(?:votre\s+)?(tour|cavalier|fou|dame|roi|pion)\s+(?:menace|attaque)\s+(?:le|la|l'|les)?\s*(tour|cavalier|fou|dame|roi|pion)\b/i;
+      /\b(?:(votre|mon|notre|ce|cette|le|la)\s+)?(tour|cavalier|fou|dame|roi|pion)(\s+adverse)?\s+(?:menace|attaque)\s+(?:le|la|l'|les)?\s*(tour|cavalier|fou|dame|roi|pion)\b/i;
     const threatMatch = norm.match(threatRegex);
-    if (threatMatch && fenAfter) {
-      const targetRoleFr = threatMatch[2];
+    if (threatMatch && fenAfter && !threatMatch[3]) {
+      const subjectRoleFr = threatMatch[2];
+      const subjectRole = roleMap[subjectRoleFr];
+      const targetRoleFr = threatMatch[4];
       const targetRole = roleMap[targetRoleFr];
       const oppColor: 'white' | 'black' = playerColor === 'white' ? 'black' : 'white';
       const playedTo = context.played.uci.slice(2, 4);
+      const subjectMatchesPlayedPiece =
+        subjectRole !== undefined && checkPieceExistsOnSquare(fenAfter, subjectRole, playedTo);
 
-      if (targetRole && !doesPieceAttackRole(fenAfter, playedTo, targetRole, oppColor)) {
+      if (
+        subjectMatchesPlayedPiece &&
+        targetRole &&
+        !doesPieceAttackRole(fenAfter, playedTo, targetRole, oppColor)
+      ) {
         return {
           isValid: false,
           reason: `Affirmation de menace inventée : la pièce jouée en ${playedTo} n'attaque aucun(e) ${targetRoleFr} adverse.`,

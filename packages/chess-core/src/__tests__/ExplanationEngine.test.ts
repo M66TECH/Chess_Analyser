@@ -472,4 +472,16 @@ describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
     expect(card.headline).toBe('Bon coup');
     expect(card.insights[0].text).not.toContain('Votre tour est en prise');
   });
+
+  it("n'émet pas de faux positif G1 sur du français courant ni de faux positif G3 sur une menace adverse", () => {
+    const card = {
+      headline: 'Attention',
+      insights: [
+        { kind: 'played_move' as const, text: 'Ce coup est une bonne idée si le fou adverse attaque la dame.' },
+      ],
+      takeaway: 'Jouer prudemment était suffisant.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(true);
+  });
 });

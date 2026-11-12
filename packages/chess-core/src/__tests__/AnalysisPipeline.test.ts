@@ -361,7 +361,7 @@ describe('AnalysisPipeline', () => {
   describe('GameAnalysisProgress & Pré-chargement Cloud (O5)', () => {
     it('émet GameAnalysisProgress et pré-charge le nuage lors de analyzeGame', async () => {
       const { eventBus, moveManager, pipeline } = setup();
-      const progressEvents: any[] = [];
+      const progressEvents: { current: number; total: number; phase: string }[] = [];
       let started = false;
       let finished = false;
 
@@ -383,6 +383,30 @@ describe('AnalysisPipeline', () => {
       expect(progressEvents.length).toBeGreaterThanOrEqual(2);
       expect(progressEvents.some((p) => p.phase === 'cloud')).toBe(true);
       expect(progressEvents.some((p) => p.phase === 'pedagogy')).toBe(true);
+    });
+
+    it('ne tronque pas moveRecords lors de la navigation arrière ou au début de partie', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+      const m1 = moveManager.playMove('e2e4');
+      const n1 = moveManager.getTree().nodes.get(m1.nodeId!)!;
+      const m2 = moveManager.playMove('e7e5');
+      const n2 = moveManager.getTree().nodes.get(m2.nodeId!)!;
+
+      vi.spyOn(CloudEvalService, 'fetch').mockImplementation(async (fen) => [
+        evaluation({ fen, depth: 20, source: 'cloud', cp: 15, pv: ['g1f3'] }),
+      ]);
+
+      await pipeline.analyzeGame([n1, n2]);
+      expect(pipeline.getMoveRecords()).toHaveLength(2);
+
+      // Navigation arrière sur le premier coup puis à la racine
+      moveManager.goToNode(n1.id);
+      eventBus.emit('NavigateTo', { fen: n1.fenAfter, nodeId: n1.id });
+      expect(pipeline.getMoveRecords()).toHaveLength(2);
+
+      moveManager.goToNode(null);
+      eventBus.emit('NavigateTo', { fen: n1.fenBefore, nodeId: null });
+      expect(pipeline.getMoveRecords()).toHaveLength(2);
     });
   });
 });

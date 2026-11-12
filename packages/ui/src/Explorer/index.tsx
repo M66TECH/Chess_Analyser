@@ -36,9 +36,9 @@ export const Explorer: React.FC<ExplorerProps> = ({ data, onMoveSelect }) => {
           <div className="space-y-2">
             {d.moves.slice(0, 10).map((move) => {
               const total = move.white + move.draws + move.black;
-              const wPct = (move.white / total) * 100;
-              const dPct = (move.draws / total) * 100;
-              const bPct = (move.black / total) * 100;
+              const wPct = total > 0 ? (move.white / total) * 100 : 0;
+              const dPct = total > 0 ? (move.draws / total) * 100 : 0;
+              const bPct = total > 0 ? (move.black / total) * 100 : 0;
 
               return (
                 <div key={move.uci} className="flex items-center gap-3 hover:bg-gray-800 p-1 rounded cursor-pointer transition-colors" onClick={() => onMoveSelect?.({ san: move.san, uci: move.uci })}>

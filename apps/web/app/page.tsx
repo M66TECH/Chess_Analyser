@@ -70,6 +70,11 @@ export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanelTab>('coach');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [playerLevel, setPlayerLevelState] = useState<PlayerLevel>('intermediaire');
+  const playerLevelRef = useRef<PlayerLevel>(playerLevel);
+
+  useEffect(() => {
+    playerLevelRef.current = playerLevel;
+  }, [playerLevel]);
 
   const gmRef = useRef<GameManager | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,11 +237,14 @@ export default function Home() {
     gmRef.current = gm;
     const eventBus = gm.eventBus;
 
-    const unsubPedagogy = eventBus.on('PedagogyUpdated', () => {
+    const unsubPedagogy = eventBus.on('PedagogyUpdated', (updatedRecord) => {
       const next = gm.getMoveRecords();
-      setRecords((prev) =>
-        prev.length === next.length && prev.at(-1)?.coachCard === next.at(-1)?.coachCard ? prev : next
-      );
+      setRecords((prev) => {
+        if (prev.length !== next.length) return next;
+        const idx = next.findIndex((r) => r.nodeId === updatedRecord.nodeId);
+        if (idx !== -1 && prev[idx]?.coachCard === next[idx]?.coachCard) return prev;
+        return next;
+      });
       saveGameDebounced();
     });
 
@@ -248,10 +256,16 @@ export default function Home() {
     const unsubNav = eventBus.on('NavigateTo', ({ nodeId }) => {
       setActiveNodeId(nodeId);
       hoverStore.setShapes(null);
+      if (!nodeId) {
+        setLastMove(undefined);
+      } else {
+        const node = gm.getTree().nodes.get(nodeId);
+        setLastMove(node ? [node.uci.slice(0, 2), node.uci.slice(2, 4)] : undefined);
+      }
     });
     const cleanupEngine = setupEngineListeners(gm);
 
-    gm.setPlayerLevel?.(playerLevel);
+    gm.setPlayerLevel?.(playerLevelRef.current);
     gm.init();
 
     const restoreTimer = setTimeout(() => {
@@ -265,6 +279,10 @@ export default function Home() {
             const decodedFen = decodeURIComponent(fenParam).trim();
             if (decodedFen) {
               gm.resetGame(decodedFen);
+              setRecords([]);
+              setTreeNodes(new Map());
+              setActiveNodeId(null);
+              setLastMove(undefined);
               setFen(decodedFen);
               showNotice('Position chargée depuis le lien partagé.', 4000);
               return;
@@ -278,6 +296,7 @@ export default function Home() {
                   setRecords(gm.getMoveRecords());
                   setTreeNodes(new Map(gm.getTree().nodes));
                   setActiveNodeId(gm.getActiveNodeId());
+                  syncLastMoveFromBoard();
                   showNotice('Partie chargée depuis le lien partagé.', 4000);
                 }
               });
@@ -296,13 +315,21 @@ export default function Home() {
 
     return () => {
       clearTimeout(restoreTimer);
+      if (noticeTimer.current) {
+        clearTimeout(noticeTimer.current);
+        noticeTimer.current = null;
+      }
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
       unsubPedagogy?.();
       unsubMove?.();
       unsubNav?.();
       cleanupEngine();
       gm.terminate();
     };
-  }, [playerLevel, restoreGame, saveGameDebounced, setupEngineListeners, showNotice, syncLastMoveFromBoard]);
+  }, [restoreGame, saveGameDebounced, setupEngineListeners, showNotice, syncLastMoveFromBoard]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -321,7 +348,7 @@ export default function Home() {
   }, [records]);
 
   const activeIndex = useMemo(() => {
-    if (!activeNodeId) return records.length > 0 ? records.length - 1 : undefined;
+    if (activeNodeId === null) return undefined;
     const idx = records.findIndex((r) => r.nodeId === activeNodeId);
     return idx === -1 ? (records.length > 0 ? records.length - 1 : undefined) : idx;
   }, [records, activeNodeId]);
@@ -635,7 +662,7 @@ export default function Home() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showNotice('Partie exportée en PGN.', 3000);
-  }, [showNotice]);
+  }, [records, showNotice]);
 
   const handleImportPgn = useCallback(
     (pgnText: string) => {
@@ -660,20 +687,6 @@ export default function Home() {
     },
     [showNotice, syncLastMoveFromBoard, setThreatMode]
   );
-
-  // O19: Support du chargement direct par URL (?pgn= ou ?fen=)
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const urlPgn = params.get('pgn');
-      const urlFen = params.get('fen');
-      if (urlPgn) {
-        handleImportPgn(decodeURIComponent(urlPgn));
-      } else if (urlFen) {
-        setFen(decodeURIComponent(urlFen));
-      }
-    } catch {}
-  }, [handleImportPgn]);
 
   const handleReset = useCallback(() => {
     const gm = gmRef.current;

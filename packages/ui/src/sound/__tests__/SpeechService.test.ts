@@ -31,6 +31,15 @@ describe('formatChessTextForSpeech', () => {
     expect(result).toContain('plus 1 virgule 5');
     expect(result).toContain('mat forcé en 3 coups pour les blancs');
   });
+
+  it("n'altère pas les mots français contenant la lettre x (excellent, exemple, expérience)", () => {
+    const text = 'Un coup excellent, par exemple pour accumuler de l’expérience.';
+    const result = formatChessTextForSpeech(text);
+    expect(result).toContain('excellent');
+    expect(result).toContain('exemple');
+    expect(result).toContain('expérience');
+    expect(result).not.toContain('prend');
+  });
 });
 
 describe('SpeechService (API & State)', () => {

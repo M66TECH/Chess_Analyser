@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useRef, useCallback, useId } from 'react';
 import { MoveRecord, formatEval } from '@chess-analyzer/chess-core';
 
 export interface EvalGraphProps {
@@ -47,6 +47,12 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const isDragging = useRef(false);
+  const lastPointerCommitTime = useRef(0);
+  const svgUid = useId().replace(/:/g, '');
+  const whiteClipId = `${svgUid}-white-clip`;
+  const blackClipId = `${svgUid}-black-clip`;
+  const whiteGradId = `${svgUid}-white-grad`;
+  const blackGradId = `${svgUid}-black-grad`;
 
   const points = useMemo(() => {
     if (records.length === 0) return [];
@@ -98,9 +104,14 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
     (clientX: number): number | null => {
       if (!containerRef.current || records.length === 0) return null;
       const rect = containerRef.current.getBoundingClientRect();
+      if (rect.width <= 0) return null;
       const relativeX = clientX - rect.left;
       const fraction = Math.max(0, Math.min(1, relativeX / rect.width));
-      const targetIndex = Math.min(records.length - 1, Math.max(0, Math.round(fraction * records.length - 1)));
+      const scaleSteps = Math.max(20, records.length);
+      const targetIndex = Math.min(
+        records.length - 1,
+        Math.max(0, Math.round(fraction * scaleSteps - 1))
+      );
       return targetIndex;
     },
     [records.length]
@@ -124,11 +135,16 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isDragging.current) return;
     isDragging.current = false;
     const idx = getIndexFromPointer(e.clientX);
     if (idx !== null) {
-      onCommitIndex?.(idx);
-      onNodeClick?.(idx);
+      lastPointerCommitTime.current = performance.now();
+      if (onCommitIndex) {
+        onCommitIndex(idx);
+      } else {
+        onNodeClick?.(idx);
+      }
     }
   };
 
@@ -170,17 +186,17 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
         className="absolute inset-0"
       >
         <defs>
-          <clipPath id="white-clip">
+          <clipPath id={whiteClipId}>
             <rect x="0" y="0" width={width} height={height / 2} />
           </clipPath>
-          <clipPath id="black-clip">
+          <clipPath id={blackClipId}>
             <rect x="0" y={height / 2} width={width} height={height / 2} />
           </clipPath>
-          <linearGradient id="white-grad" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={whiteGradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#ffffff" stopOpacity="0.35" />
             <stop offset="100%" stopColor="#ffffff" stopOpacity="0.0" />
           </linearGradient>
-          <linearGradient id="black-grad" x1="0" y1="1" x2="0" y2="0">
+          <linearGradient id={blackGradId} x1="0" y1="1" x2="0" y2="0">
             <stop offset="0%" stopColor="#000000" stopOpacity="0.45" />
             <stop offset="100%" stopColor="#000000" stopOpacity="0.0" />
           </linearGradient>
@@ -190,8 +206,8 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
         <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke="#475569" strokeWidth={1} strokeDasharray="3 3" />
 
         {/* Advantage areas */}
-        <path d={fillWhitePath} fill="url(#white-grad)" clipPath="url(#white-clip)" />
-        <path d={fillBlackPath} fill="url(#black-grad)" clipPath="url(#black-clip)" />
+        <path d={fillWhitePath} fill={`url(#${whiteGradId})`} clipPath={`url(#${whiteClipId})`} />
+        <path d={fillBlackPath} fill={`url(#${blackGradId})`} clipPath={`url(#${blackClipId})`} />
 
         {/* Main curve */}
         <path d={pathD} fill="none" stroke="#60A5FA" strokeWidth={2} strokeLinejoin="round" />
@@ -242,8 +258,12 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
               className="cursor-pointer transition-all duration-100"
               onClick={(e) => {
                 e.stopPropagation();
-                onNodeClick?.(p.index);
-                onCommitIndex?.(p.index);
+                if (performance.now() - lastPointerCommitTime.current < 100) return;
+                if (onCommitIndex) {
+                  onCommitIndex(p.index);
+                } else {
+                  onNodeClick?.(p.index);
+                }
               }}
             />
           );

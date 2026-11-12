@@ -1,18 +1,15 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import type { GameManager, ExplorerResult } from '@chess-analyzer/chess-core';
 import {
   EvalNormalizer,
-  MotifEngine,
   pvToShape,
   CloudEvalService,
   ExplorerService,
   DEFAULT_TARGET_DEPTH,
 } from '@chess-analyzer/chess-core';
 import type { EngineEvaluation } from '@chess-analyzer/chess-core/src/events/GameEventBus';
-import { parseFen } from 'chessops/fen';
-import { Chess } from 'chessops/chess';
 
 export interface EvalState {
   winProb: number;
@@ -32,11 +29,25 @@ export interface UseEngineAnalysisOptions {
 
 export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEngineAnalysisOptions) {
   const [evalState, setEvalState] = useState<EvalState>({ winProb: 0, cp: 0, depth: 0, status: 'idle' });
+  const evalStateRef = useRef<EvalState>(evalState);
   const [shapes, setShapes] = useState<Array<{ orig: string; dest?: string; brush: string }>>([]);
   const [threatMode, setThreatMode] = useState(false);
+  const threatModeRef = useRef(false);
   const [showLines, setShowLines] = useState(false);
   const showLinesRef = useRef(false);
   const [explorerData, setExplorerData] = useState<ExplorerResult>(null);
+
+  useEffect(() => {
+    evalStateRef.current = evalState;
+  }, [evalState]);
+
+  useEffect(() => {
+    threatModeRef.current = threatMode;
+  }, [threatMode]);
+
+  useEffect(() => {
+    showLinesRef.current = showLines;
+  }, [showLines]);
 
   const multiPvs = useRef<Map<number, EngineEvaluation>>(new Map());
   const threatPvs = useRef<Map<number, EngineEvaluation>>(new Map());
@@ -76,42 +87,19 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
     }, wait) as unknown as number;
   }, []);
 
-  // Motif cache by FEN
-  const motifCache = useRef<{
-    fen: string;
-    shapes: Array<{ orig: string; dest?: string; brush: string }>;
-  } | null>(null);
-
-  const getMotifShapes = useCallback((fenStr: string) => {
-    if (motifCache.current && motifCache.current.fen === fenStr) {
-      return motifCache.current.shapes;
-    }
-    const out: Array<{ orig: string; dest?: string; brush: string }> = [];
-    try {
-      const pos = Chess.fromSetup(parseFen(fenStr).unwrap()).unwrap();
-      for (const u of MotifEngine.detectUndefended(pos.board, pos.epSquare)) {
-        const file = String.fromCharCode(97 + (u.square % 8));
-        const rank = Math.floor(u.square / 8) + 1;
-        out.push({ orig: `${file}${rank}`, brush: 'red' });
-      }
-      for (const p of MotifEngine.detectPins(pos.board)) {
-        const file = String.fromCharCode(97 + (p.pinned % 8));
-        const rank = Math.floor(p.pinned / 8) + 1;
-        out.push({ orig: `${file}${rank}`, brush: 'blue' });
-      }
-    } catch {
-      // Unreadable position: safe fallback
-    }
-    motifCache.current = { fen: fenStr, shapes: out };
-    return out;
-  }, []);
-
-  const fetchExplorerDebounced = useCallback((fenStr: string) => {
-    if (explorerTimer.current) clearTimeout(explorerTimer.current);
-    explorerTimer.current = setTimeout(() => {
-      ExplorerService.fetch(fenStr).then(setExplorerData);
-    }, 300);
-  }, []);
+  const fetchExplorerDebounced = useCallback(
+    (fenStr: string) => {
+      if (explorerTimer.current) clearTimeout(explorerTimer.current);
+      explorerTimer.current = setTimeout(() => {
+        ExplorerService.fetch(fenStr).then((data) => {
+          const current = gmRef.current?.moveManager.getFen();
+          if (current && current !== fenStr) return;
+          setExplorerData(data);
+        });
+      }, 300);
+    },
+    [gmRef]
+  );
 
   const fetchCloudEval = useCallback((fenStr: string) => {
     if (cloudTimer.current) clearTimeout(cloudTimer.current);
@@ -135,34 +123,32 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
   }, [gmRef]);
 
   const toggleThreatMode = useCallback(() => {
-    setThreatMode((prev) => {
-      const next = !prev;
-      if (next) {
-        setShapes([]);
-        gmRef.current?.engineManager.analyzeThreat(fen);
-      } else {
-        gmRef.current?.engineManager.analyze(fen, DEFAULT_TARGET_DEPTH, undefined, true);
-      }
-      return next;
-    });
+    const next = !threatModeRef.current;
+    threatModeRef.current = next;
+    setThreatMode(next);
+    const currentFen = gmRef.current?.moveManager.getFen() ?? fen;
+    if (next) {
+      setShapes([]);
+      gmRef.current?.engineManager.analyzeThreat(currentFen);
+    } else {
+      gmRef.current?.engineManager.analyze(currentFen, DEFAULT_TARGET_DEPTH, undefined, true);
+    }
   }, [fen, gmRef]);
 
   const toggleLines = useCallback(() => {
-    setShowLines((prev) => {
-      const next = !prev;
-      showLinesRef.current = next;
-      const engine = gmRef.current?.engineManager;
-      if (!engine) return next;
-      engine.setMultiPv(next ? 3 : 1);
-      if (!next) {
-        multiPvs.current.delete(2);
-        multiPvs.current.delete(3);
-        setShapes((prevShapes) => prevShapes.filter((s) => s.brush !== 'paleBlue'));
-      }
-      const currentFen = gmRef.current?.moveManager.getFen();
-      if (currentFen) engine.analyze(currentFen, DEFAULT_TARGET_DEPTH, undefined, true);
-      return next;
-    });
+    const next = !showLinesRef.current;
+    showLinesRef.current = next;
+    setShowLines(next);
+    const engine = gmRef.current?.engineManager;
+    if (!engine) return;
+    engine.setMultiPv(next ? 3 : 1);
+    if (!next) {
+      multiPvs.current.delete(2);
+      multiPvs.current.delete(3);
+      setShapes((prevShapes) => prevShapes.filter((s) => s.brush !== 'paleBlue'));
+    }
+    const currentFen = gmRef.current?.moveManager.getFen();
+    if (currentFen) engine.analyze(currentFen, DEFAULT_TARGET_DEPTH, undefined, true);
   }, [gmRef]);
 
   const depthLabel = useMemo(() => {
@@ -187,7 +173,7 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
 
           // Garde de préséance : ne jamais écraser une évaluation cloud à haute profondeur
           // par une évaluation locale de profondeur inférieure
-          const currentEval = evalAccum.current.value ?? evalState;
+          const currentEval = evalAccum.current.value ?? evalStateRef.current;
           if (
             currentEval.source === 'cloud' &&
             evaluation.source !== 'cloud' &&
@@ -234,6 +220,11 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
       });
 
       const unsubThreat = eventBus.on('ThreatEvaluationUpdated', (evaluation) => {
+        if (!threatModeRef.current) return;
+        if (evaluation.fen) {
+          const currentPlacement = gm.moveManager.getFen().split(' ')[0];
+          if (evaluation.fen.split(' ')[0] !== currentPlacement) return;
+        }
         threatPvs.current.set(evaluation.multiPv || 1, evaluation);
         const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
         const pv3 = threatPvs.current.get(3);
@@ -263,7 +254,6 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
       const unsubPos = eventBus.on('PositionChanged', ({ fen: newFen }) => {
         multiPvs.current.clear();
         threatPvs.current.clear();
-        motifCache.current = null;
         onFenChange(newFen);
         setEvalState((prev) => ({ ...prev, source: undefined }));
         fetchExplorerDebounced(newFen);
@@ -285,7 +275,6 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
     [
       fetchCloudEval,
       fetchExplorerDebounced,
-      getMotifShapes,
       onFenChange,
       scheduleEvalFlush,
       scheduleShapeFlush,

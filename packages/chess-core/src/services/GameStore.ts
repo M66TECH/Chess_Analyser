@@ -51,7 +51,9 @@ export interface StoredMoveRecord {
   moveNumber: number;
   cpBefore: number;
   cpAfter: number;
+  mateBefore?: number;
   mateAfter?: number;
+  bestMove?: string;
   winProbBefore: number;
   winProbAfter: number;
   accuracy: number;
@@ -59,6 +61,7 @@ export interface StoredMoveRecord {
   classificationLabel?: string;
   opening?: string;
   mate?: string | undefined;
+  mateSequence?: string | undefined;
 }
 
 export interface SerializeResult {
@@ -88,13 +91,16 @@ export function serializeGame(params: {
     moveNumber: r.moveNumber,
     cpBefore: r.cpBefore,
     cpAfter: r.cpAfter,
+    mateBefore: r.mateBefore,
     mateAfter: r.mateAfter,
+    bestMove: r.bestMove,
     winProbBefore: r.winProbBefore,
     winProbAfter: r.winProbAfter,
     accuracy: r.accuracy,
     classification: r.classification,
     opening: r.opening,
     mate: r.mateSequence,
+    mateSequence: r.mateSequence,
   }));
 
   const payload: StoredGameV1 = {

@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   let body: CoachRequest;
   try {
     const raw = await request.text();
-    if (raw.length > MAX_COACH_BODY_BYTES) {
+    if (Buffer.byteLength(raw, 'utf8') > MAX_COACH_BODY_BYTES) {
       return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
     }
     body = JSON.parse(raw) as CoachRequest;
@@ -73,9 +73,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'messages must be a non-empty array' }, { status: 400 });
   }
 
-  const temperature = typeof body.temperature === 'number' ? body.temperature : 0.7;
-  const requested = typeof body.maxTokens === 'number' ? body.maxTokens : DEFAULT_MAX_TOKENS;
-  const maxTokens = Math.max(MIN_MAX_TOKENS, requested);
+  const rawTemperature =
+    typeof body.temperature === 'number' && Number.isFinite(body.temperature)
+      ? body.temperature
+      : 0.7;
+  const temperature = Math.min(2, Math.max(0, rawTemperature));
+  const rawMaxTokens =
+    typeof body.maxTokens === 'number' && Number.isFinite(body.maxTokens)
+      ? body.maxTokens
+      : DEFAULT_MAX_TOKENS;
+  const maxTokens = Math.min(4096, Math.max(MIN_MAX_TOKENS, Math.floor(rawMaxTokens)));
 
   // 3. Délégation à l'orchestrateur avec passage du signal client pour annulation
   const result = await aiGateway.complete({

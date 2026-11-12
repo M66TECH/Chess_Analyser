@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { MoveTree, MoveList, Explorer } from '@chess-analyzer/ui';
-import type { MoveNode, MoveRecord } from '@chess-analyzer/chess-core';
+import type { ExplorerResult, MoveNode, MoveRecord } from '@chess-analyzer/chess-core';
 import type { MobilePanelTab } from './MobileNavigationTabs';
 
 export interface AnalysisRailProps {
@@ -11,7 +11,7 @@ export interface AnalysisRailProps {
   records: MoveRecord[];
   activeNodeId: string | null;
   activeIndex?: number;
-  explorerData: any;
+  explorerData: ExplorerResult;
   onSelectNode: (nodeId: string) => void;
   onExplorerMove: (move: { san: string; uci: string }) => void;
 }

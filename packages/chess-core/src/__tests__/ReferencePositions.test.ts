@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFen } from 'chessops/fen';
+import { parseFen, makeFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
 import { parseSan } from 'chessops/san';
 import { MotifEngine } from '../pedagogy/MotifEngine';
@@ -111,6 +111,7 @@ describe('Positions de référence d\'école certifiées (I3 & P0)', () => {
       expect(move).toBeDefined();
       pos.play(move!);
       expect(pos.turn).toBe('black');
+      expect(makeFen(pos.toSetup())).toBe(fenAfter11a4);
     });
   });
 });

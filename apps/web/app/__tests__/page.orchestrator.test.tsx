@@ -75,7 +75,7 @@ vi.mock('@chess-analyzer/chess-core', async (importOriginal) => {
     public restoreSession() {
       return false;
     }
-    public playMove(_uci: string) {
+    public playMove() {
       return { success: true, nodeId: 'n1', san: 'e4' };
     }
   }

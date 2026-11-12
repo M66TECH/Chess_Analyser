@@ -55,6 +55,7 @@ export class GameManager {
 
       // Succession 1 : Émission immédiate du cache pour réactivité instantanée à la navigation
       const cached = await this.pipeline.getEvalCache().get(fen);
+      if (this.moveManager.getFen() !== fen) return;
       if (cached) {
         this.eventBus.emit('EngineEvaluationUpdated', cached);
         // Si c'est un mat résolu ou déjà analysé à profondeur maximale, pas besoin de relancer
@@ -143,8 +144,7 @@ export class GameManager {
 
     // Réinitialiser la position de départ
     const startFen = this.moveManager.getFen();
-    this.eventBus.emit('PositionChanged', { fen: startFen });
-    this.engineManager.analyze(startFen, DEFAULT_TARGET_DEPTH, undefined, true);
+    void this.pipeline.initialize(startFen);
   }
 
   public async loadPgn(pgnText: string): Promise<{ success: boolean; error?: string; moveCount?: number }> {
@@ -202,9 +202,10 @@ export class GameManager {
 
     if (savedRecords && savedRecords.length > 0) {
       // Réassocier par index sur la branche principale si les nodeId ont changé
-      const remapped = savedRecords.map((rec, idx) =>
-        nodes[idx] ? { ...rec, nodeId: nodes[idx].id } : rec
-      );
+      const remapped = savedRecords.slice(0, nodes.length).map((rec, idx) => ({
+        ...rec,
+        nodeId: nodes[idx].id,
+      }));
       this.pipeline.restoreMoveRecords(remapped);
     }
 

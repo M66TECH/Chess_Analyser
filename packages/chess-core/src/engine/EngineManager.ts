@@ -164,8 +164,13 @@ export class EngineManager {
 
   /** Nouvelle partie : on vide la table de transposition. */
   public reinit() {
-    if (!this.isReady) return;
+    this.pendingFen = null;
+    this.pendingHistory = null;
+    this.pendingThreat = false;
+    this.isThreatMode = false;
     this.pendingGo = null;
+    this.currentAnalysisFen = null;
+    if (!this.isReady) return;
     this.send('stop');
     this.send('ucinewgame');
   }

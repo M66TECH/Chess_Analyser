@@ -66,7 +66,7 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
     if (containerRef.current) {
       const activeEl = containerRef.current.querySelector('.active-move');
       if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        activeEl.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
       }
     }
   }, [activeIndex, records]);

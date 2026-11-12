@@ -84,18 +84,24 @@ export class MatchSummaryService {
     baseStats.classificationCounts = counts;
 
     // 3. Identification du tournant décisif (Critical Moment)
-    let maxSwing = -1;
+    const isUnitScale =
+      records.length > 0 &&
+      records.every(
+        (r) => Math.abs(r.winProbBefore) <= 1.001 && Math.abs(r.winProbAfter) <= 1.001
+      );
+    let maxSwingPct = -1;
     let criticalRecord: MoveRecord | null = null;
 
     for (const r of records) {
-      const swing = Math.abs(r.winProbBefore - r.winProbAfter);
+      const rawSwing = Math.abs(r.winProbBefore - r.winProbAfter);
+      const swingPct = isUnitScale ? rawSwing * 50 : rawSwing;
       if (
-        swing > maxSwing &&
+        swingPct > maxSwingPct &&
         (r.classification === 'blunder' ||
           r.classification === 'mistake' ||
           r.classification === 'brilliant')
       ) {
-        maxSwing = swing;
+        maxSwingPct = swingPct;
         criticalRecord = r;
       }
     }
@@ -105,10 +111,11 @@ export class MatchSummaryService {
       const bestSan = criticalRecord.bestMove
         ? uciToSan(criticalRecord.fenBefore, criticalRecord.bestMove) ?? criticalRecord.bestMove
         : undefined;
+      const bestMoveSentence = bestSan ? ` Coup recommandé : ${bestSan}.` : '';
       const desc =
         criticalRecord.classification === 'brilliant'
           ? `Coup de génie des ${who} avec ${criticalRecord.san} qui scelle le gain.`
-          : `Tournant du match au coup ${Math.floor(criticalRecord.moveNumber)} : ${criticalRecord.san} (${who}) a coûté ${Math.round(maxSwing)}% de chances. Coup recommandé : ${bestSan}.`;
+          : `Tournant du match au coup ${Math.floor(criticalRecord.moveNumber)} : ${criticalRecord.san} (${who}) a coûté ${Math.round(maxSwingPct)}% de chances.${bestMoveSentence}`;
 
       baseStats.criticalMoment = {
         moveNumber: criticalRecord.moveNumber,
@@ -117,7 +124,7 @@ export class MatchSummaryService {
         playedMove: criticalRecord.playedMove,
         bestMove: criticalRecord.bestMove,
         fenBefore: criticalRecord.fenBefore,
-        winDrop: maxSwing / 100,
+        winDrop: maxSwingPct / 100,
         cpBefore: criticalRecord.cpBefore,
         cpAfter: criticalRecord.cpAfter,
         description: desc,

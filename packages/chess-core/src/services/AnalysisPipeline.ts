@@ -49,6 +49,7 @@ export class AnalysisPipeline {
    * (sinon deux imports concurrents s'écrasent mutuellement).
    */
   private importRunId = 0;
+  private movePlaySeq = 0;
   private playerLevel: PlayerLevel = 'intermediaire';
 
   public setPlayerLevel(level: PlayerLevel): void {
@@ -135,6 +136,7 @@ export class AnalysisPipeline {
 
   private setupListeners() {
     this.eventBus.on('MovePlayed', async ({ fenBefore, fenAfter, move, nodeId }) => {
+      const seq = ++this.movePlaySeq;
       // Get the node to extract SAN
       const tree = this.moveManager.getTree();
       const node = tree.nodes.get(nodeId);
@@ -146,6 +148,7 @@ export class AnalysisPipeline {
       // kept as null: substituting {cp: 0} would fabricate an "equal" starting
       // point and corrupt the accuracy of the very first move (E1).
       const evalBefore = await this.evalCache.get(fenBefore);
+      if (seq !== this.movePlaySeq) return;
       this.evalBeforeMove = evalBefore ?? null;
       this.latestEval = null;
       this.pedagogyDone = false;
@@ -208,6 +211,7 @@ export class AnalysisPipeline {
 
       // Succession 2 : Cache local (EvalCache)
       const cached = await this.evalCache.get(fenAfter);
+      if (seq !== this.movePlaySeq) return;
       if (
         this.pendingMove?.fenAfter === fenAfter &&
         cached &&
@@ -235,6 +239,7 @@ export class AnalysisPipeline {
           if (!cloudEvals || cloudEvals.length === 0) return;
           const cloudBest = cloudEvals[0];
           if (
+            seq === this.movePlaySeq &&
             this.pendingMove?.fenAfter === fenAfter &&
             !this.pedagogyDone &&
             (cloudBest.depth >= this.targetDepth || typeof cloudBest.mate === 'number')
@@ -260,6 +265,7 @@ export class AnalysisPipeline {
 
     // Race navigation/analyse : invalider toute analyse en cours
     this.eventBus.on('NavigateTo', () => {
+      this.movePlaySeq++;
       this.pendingMove = null;
       this.warmFen = null;
       this.latestEval = null;
@@ -426,10 +432,45 @@ export class AnalysisPipeline {
     };
   }
 
-  private syncMoveRecordsWithTree() {    const history = this.moveManager.getHistory();
-    if (history.length > 0) {
+  private syncMoveRecordsWithTree() {
+    const history = this.moveManager.getHistory();
+    const tree = this.moveManager.getTree();
+    const visited = new Set<string>();
+    const branchNodes: MoveNode[] = [...history];
+    for (const n of branchNodes) visited.add(n.id);
+
+    let cursor: MoveNode | undefined = branchNodes.at(-1);
+    if (!cursor && tree.nodes.size > 0) {
+      let rootMain: MoveNode | undefined;
+      for (const n of tree.nodes.values()) {
+        if (n.parentId === null) {
+          if (n.isMainline) {
+            rootMain = n;
+            break;
+          }
+          if (!rootMain) rootMain = n;
+        }
+      }
+      if (rootMain) {
+        branchNodes.push(rootMain);
+        visited.add(rootMain.id);
+        cursor = rootMain;
+      }
+    }
+
+    while (cursor && cursor.childrenIds.length > 0) {
+      const nextId = cursor.childrenIds[0];
+      if (!nextId || visited.has(nextId)) break;
+      const nextNode = tree.nodes.get(nextId);
+      if (!nextNode) break;
+      branchNodes.push(nextNode);
+      visited.add(nextNode.id);
+      cursor = nextNode;
+    }
+
+    if (branchNodes.length > 0) {
       const synced: MoveRecord[] = [];
-      for (const node of history) {
+      for (const node of branchNodes) {
         const rec = this.recordsByNodeId.get(node.id);
         if (rec) synced.push(rec);
       }
@@ -592,7 +633,7 @@ export class AnalysisPipeline {
       ExplanationEngine.generateCard(analysis, this.playerLevel, previous?.classification ?? null)
         .then(card => {
           analysis.coachCard = card;
-          if (this.pendingMove?.nodeId === nodeId || this.moveRecords.at(-1)?.nodeId === nodeId) {
+          if (this.recordsByNodeId.get(nodeId) === analysis) {
             this.eventBus.emit('PedagogyUpdated', analysis);
           }
         })
@@ -869,6 +910,7 @@ export class AnalysisPipeline {
   public resetPending() {
     // Invalide tout import PGN en cours (voir analyzeGame / importRunId).
     this.importRunId++;
+    this.movePlaySeq++;
     this.pendingMove = null;
     this.evalBeforeMove = null;
     this.latestEval = null;

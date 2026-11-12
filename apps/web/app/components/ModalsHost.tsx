@@ -52,6 +52,11 @@ function ModalOverlay({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     previousActiveElement.current = document.activeElement as HTMLElement | null;
@@ -59,7 +64,7 @@ function ModalOverlay({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -103,7 +108,7 @@ function ModalOverlay({
       document.removeEventListener('keydown', handleKeyDown);
       previousActiveElement.current?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div

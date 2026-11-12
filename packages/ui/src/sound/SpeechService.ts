@@ -77,8 +77,8 @@ export function formatChessTextForSpeech(rawText: string): string {
     .replace(/\bQ([a-h][1-8])\b/g, 'Dame $1')
     .replace(/\bK([a-h][1-8])\b/g, 'Roi $1');
 
-  // Autres captures résiduelles
-  text = text.replace(/(\w+)\s*x\s*(\w+)/gi, '$1 prend $2');
+  // Autres captures résiduelles espacées (sans altérer les mots français contenant 'x')
+  text = text.replace(/\b([a-h1-8RDTFCKQBN]+)\s+x\s+([a-h][1-8])\b/gi, '$1 prend $2');
 
   // Espacer les coordonnées de cases (ex "f7" prononcé "f 7")
   text = text.replace(/\b([a-h])([1-8])\b/gi, '$1 $2');
@@ -305,6 +305,14 @@ export class SpeechService {
     try {
       synth.speak(utterance);
     } catch (e) {
+      this.currentUtterance = null;
+      this.currentText = null;
+      this.state = {
+        isSpeaking: false,
+        isPaused: false,
+        currentText: null,
+      };
+      this.notify();
       options.onError?.(e);
     }
   }

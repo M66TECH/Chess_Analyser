@@ -59,14 +59,14 @@ export function detectMaterialSacrifice(
 
     // Jouer le coup
     const move = parseUci(playedMove);
-    if (!move) return 0;
+    if (!move || !pos.isLegal(move)) return 0;
     pos.play(move);
 
     // Jouer la meilleure réponse adverse (PV[0] ou PV[1])
     const opponentMoveUci = pv && pv.length > 0 ? (pv[0] === playedMove ? pv[1] : pv[0]) : undefined;
     if (opponentMoveUci) {
       const oppMove = parseUci(opponentMoveUci);
-      if (oppMove) {
+      if (oppMove && pos.isLegal(oppMove)) {
         pos.play(oppMove);
       }
     }

@@ -88,7 +88,7 @@ export class SoundService {
    * Play a specific sound effect using synthetic Web Audio pulses.
    */
   public play(effect: SoundEffect): void {
-    if (!this.enabled) return;
+    if (!this.enabled || this.volume <= 0) return;
     this.unlockAudio();
     if (!this.ctx) return;
 

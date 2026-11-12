@@ -128,5 +128,22 @@ describe('GameStore — persistance versionnée (P2.10)', () => {
       expect(result.game?.records?.map(r => r.san)).toEqual(['e4', 'e5']);
       expect(result.game?.records?.map(r => r.classification)).toEqual(['best', 'book']);
     });
+
+    it('préserve bestMove, mateBefore et mateSequence lors de la sérialisation', () => {
+      const records = [
+        record({
+          bestMove: 'd2d4',
+          mateBefore: 3,
+          mateAfter: 2,
+          mateSequence: 'created',
+        }),
+      ];
+      const { json } = serializeGame({ moves: ['e2e4'], records });
+      const result = parseStoredGame(json);
+      expect(result.ok).toBe(true);
+      expect(result.game?.records?.[0].bestMove).toBe('d2d4');
+      expect(result.game?.records?.[0].mateBefore).toBe(3);
+      expect(result.game?.records?.[0].mateSequence).toBe('created');
+    });
   });
 });

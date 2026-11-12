@@ -58,4 +58,11 @@ describe('SoundService', () => {
     sound.setEnabled(false);
     expect(() => sound.play('move')).not.toThrow();
   });
+
+  it('does not crash or synthesize when volume is 0', () => {
+    const sound = SoundService.getInstance();
+    sound.setEnabled(true);
+    sound.setVolume(0);
+    expect(() => sound.play('move')).not.toThrow();
+  });
 });

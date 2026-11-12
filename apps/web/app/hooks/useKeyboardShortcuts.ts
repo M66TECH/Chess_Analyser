@@ -26,8 +26,13 @@ export function useKeyboardShortcuts(
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey || event.altKey) && event.key !== 'Escape') {
         return;
       }
 

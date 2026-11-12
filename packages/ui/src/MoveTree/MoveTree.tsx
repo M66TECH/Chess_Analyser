@@ -43,7 +43,7 @@ export const MoveTree: React.FC<MoveTreeProps> = ({
   // Scroll automatique sur le coup actif
   useEffect(() => {
     if (activeItemRef.current) {
-      activeItemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      activeItemRef.current.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
     }
   }, [activeNodeId]);
 
