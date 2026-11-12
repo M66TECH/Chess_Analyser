@@ -102,11 +102,21 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                 onClick={() => row.whiteIndex !== undefined && onNodeClick?.(row.whiteIndex)}
               >
                 <span>{row.white?.san}</span>
-                {row.white && row.white.classification !== 'good' && (
-                  <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.white.classification)}`}>
-                    {getBadgeContent(row.white.classification)}
-                  </span>
-                )}
+                <div className="flex items-center gap-1">
+                  {(row.white?.theory?.status === 'confirmed' || row.white?.theory?.isTheory) && (
+                    <span
+                      title="Coup théorique (Livre)"
+                      className="px-1.5 py-0.5 rounded border text-[10px] font-bold bg-purple-400/20 text-purple-300 border-purple-400/50 shadow-[0_0_10px_rgba(192,132,252,0.2)]"
+                    >
+                      <FontAwesomeIcon icon={faBookOpen} className="w-2.5 h-2.5 inline" />
+                    </span>
+                  )}
+                  {row.white && row.white.classification !== 'good' && row.white.classification !== 'book' && (
+                    <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.white.classification)}`}>
+                      {getBadgeContent(row.white.classification)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Black Move */}
@@ -119,11 +129,21 @@ export const MoveList: React.FC<MoveListProps> = ({ records, activeIndex, onNode
                   onClick={() => row.blackIndex !== undefined && onNodeClick?.(row.blackIndex)}
                 >
                   <span>{row.black.san}</span>
-                  {row.black.classification !== 'good' && (
-                    <span className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.black.classification)}`}>
-                      {getBadgeContent(row.black.classification)}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {(row.black.theory?.status === 'confirmed' || row.black.theory?.isTheory) && (
+                      <span
+                        title="Coup théorique (Livre)"
+                        className="px-1.5 py-0.5 rounded border text-[10px] font-bold bg-purple-400/20 text-purple-300 border-purple-400/50 shadow-[0_0_10px_rgba(192,132,252,0.2)]"
+                      >
+                        <FontAwesomeIcon icon={faBookOpen} className="w-2.5 h-2.5 inline" />
+                      </span>
+                    )}
+                    {row.black.classification !== 'good' && row.black.classification !== 'book' && (
+                      <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${getBadgeColor(row.black.classification)}`}>
+                        {getBadgeContent(row.black.classification)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="px-3 py-1.5"></div>

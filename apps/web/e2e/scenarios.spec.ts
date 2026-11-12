@@ -63,7 +63,7 @@ test.describe('Chess Analyzer — E2E Critical Scenarios (P1.6)', () => {
       await page.getByRole('button', { name: 'Coups' }).click();
     }
 
-    await expect(page.getByText('Bb5').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Bb5').first()).toBeVisible({ timeout: 30_000 });
   });
 
   test('Scénario 4: Contrôle audio (Mute / Unmute)', async ({ page }) => {

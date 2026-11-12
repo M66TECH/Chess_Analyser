@@ -40,6 +40,7 @@ const PlayerColumn: React.FC<{
     brilliant?: number;
     great?: number;
     best?: number;
+    book?: number;
   };
 }> = ({ name, swatchClass, stats }) => (
   <div className="space-y-3">
@@ -51,6 +52,9 @@ const PlayerColumn: React.FC<{
     <AccuracyCard label="Précision globale" value={stats.accuracy} />
 
     <div className="space-y-1.5">
+      {stats.book !== undefined && stats.book > 0 && (
+        <StatRow label="Coups de Livre" icon="📖" value={stats.book} color="text-purple-300" />
+      )}
       {stats.brilliant !== undefined && stats.brilliant > 0 && (
         <StatRow label="Coups Brillants" icon="!!" value={stats.brilliant} color="text-teal-300" />
       )}
@@ -122,6 +126,7 @@ export const GameReport: React.FC<GameReportProps> = ({ stats, onClose }) => {
             brilliant: countsW?.brilliant,
             great: countsW?.great,
             best: countsW?.best,
+            book: countsW?.book,
           }}
         />
         <PlayerColumn
@@ -136,6 +141,7 @@ export const GameReport: React.FC<GameReportProps> = ({ stats, onClose }) => {
             brilliant: countsB?.brilliant,
             great: countsB?.great,
             best: countsB?.best,
+            book: countsB?.book,
           }}
         />
       </div>
