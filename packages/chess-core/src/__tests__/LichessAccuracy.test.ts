@@ -282,5 +282,31 @@ describe('LichessAccuracy', () => {
       expect(MoveClassifier.classify(0.05).classification).toBe('good');
       expect(MoveClassifier.classify(0, { isBestMove: true }).classification).toBe('best');
     });
+
+    it('G4 : ne classe jamais en "good" ou "excellent" un coup non optimal sous mat forcé (prevScore.mate < 0)', () => {
+      // Sous mat en 4, le joueur joue un coup non optimal qui précipite le mat en 1 -> blunder
+      const blunder = MoveClassifier.classify(0.0, {
+        isBestMove: false,
+        prevScore: { mate: -4 },
+        nextScore: { mate: -1 },
+      });
+      expect(blunder.classification).toBe('blunder');
+
+      // Sous mat en 3, le joueur joue un coup non optimal mais qui maintient la résistance -> inaccuracy
+      const inaccuracy = MoveClassifier.classify(0.0, {
+        isBestMove: false,
+        prevScore: { mate: -3 },
+        nextScore: { mate: -3 },
+      });
+      expect(inaccuracy.classification).toBe('inaccuracy');
+
+      // Si le joueur joue le meilleur coup sous mat forcé -> 'best'
+      const best = MoveClassifier.classify(0.0, {
+        isBestMove: true,
+        prevScore: { mate: -3 },
+        nextScore: { mate: -3 },
+      });
+      expect(best.classification).toBe('best');
+    });
   });
 });

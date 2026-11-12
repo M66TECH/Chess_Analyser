@@ -409,6 +409,47 @@ describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
     expect(res.reason).toContain('Affirmation hallucinatoire');
   });
 
+  it('rejette une recommandation non-canonique de coup alternatif (G1)', () => {
+    const card = {
+      headline: 'Autre idée',
+      insights: [{ kind: 'mistake' as const, text: 'd5 était une excellente idée dans cette position.' }],
+      takeaway: 'Cherchez les bons coups.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('Recommandation');
+  });
+
+  it('rejette une affirmation de position favorable contredite par une évaluation négative (G2)', () => {
+    const losingCtx = {
+      ...dummyCtx,
+      evaluation: {
+        ...dummyCtx.evaluation,
+        after: -320,
+      },
+    };
+    const card = {
+      headline: 'Succès',
+      insights: [{ kind: 'played_move' as const, text: 'Votre position est bonne et vous avez l\'avantage.' }],
+      takeaway: 'Continuez.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, losingCtx.tactical_facts, losingCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('position favorable');
+  });
+
+  it('rejette une affirmation de menace directe inventée (G3)', () => {
+    // dummyCtx : e2e4 joué par les blancs, le pion en e4 attaque d5 et f5, pas la dame noire en d8
+    const card = {
+      headline: 'Menace',
+      insights: [{ kind: 'played_move' as const, text: 'Votre pion menace la dame adverse.' }],
+      takeaway: 'Attaquez.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
+    expect(res.isValid).toBe(false);
+    expect(res.reason).toContain('menace inventée');
+  });
+
   it('rejette une incohérence de camp / couleur', () => {
     // dummyCtx a played.color = 'white'
     const card = {

@@ -91,9 +91,21 @@ export class MoveClassifier {
 
       let faultJudgment = advised?.judgment;
       if (!faultJudgment && !isMateDelayed) {
-        if (winDrop >= 0.3) faultJudgment = 'blunder';
-        else if (winDrop >= 0.2) faultJudgment = 'mistake';
-        else if (winDrop >= 0.1) faultJudgment = 'inaccuracy';
+        if (prevScore?.mate !== undefined && prevScore.mate < 0) {
+          if (nextScore?.mate !== undefined && nextScore.mate < 0) {
+            if (Math.abs(nextScore.mate) < Math.abs(prevScore.mate)) {
+              faultJudgment = 'blunder';
+            } else {
+              faultJudgment = 'inaccuracy';
+            }
+          } else {
+            faultJudgment = 'blunder';
+          }
+        } else {
+          if (winDrop >= 0.3) faultJudgment = 'blunder';
+          else if (winDrop >= 0.2) faultJudgment = 'mistake';
+          else if (winDrop >= 0.1) faultJudgment = 'inaccuracy';
+        }
       }
 
       if (faultJudgment) {

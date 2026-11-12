@@ -15,6 +15,7 @@ import type { MoveRecord } from './types';
 
 import { parseFen, makeFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
+import { attacks } from 'chessops/attacks';
 import { parseSan } from 'chessops/san';
 import { makeSquare, parseSquare, parseUci } from 'chessops/util';
 import type { Role } from 'chessops/types';
@@ -184,6 +185,26 @@ function checkPieceExistsOnSquare(fen: string, role: Role, squareStr: string): b
     return piece !== undefined && piece.role === role;
   } catch {
     return false;
+  }
+}
+
+function doesPieceAttackRole(
+  fen: string,
+  fromSquareStr: string,
+  targetRole: Role,
+  targetColor: 'white' | 'black'
+): boolean {
+  try {
+    const setup = parseFen(fen).unwrap();
+    const sq = parseSquare(fromSquareStr);
+    if (sq === undefined) return false;
+    const piece = setup.board.get(sq);
+    if (!piece) return false;
+    const attackedSquares = attacks(piece, sq, setup.board.occupied);
+    const targetPieces = setup.board[targetColor].intersect(setup.board[targetRole]);
+    return attackedSquares.intersects(targetPieces);
+  } catch {
+    return true;
   }
 }
 
@@ -668,12 +689,24 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
       }
     }
 
-    // 5. Contrôle des recommandations de coup alternatif (« Vous devriez jouer X », « Il fallait jouer X »)
-    const recommendationMatch = norm.match(
-      /\b(?:vous devriez jouer|il fallait jouer|le meilleur coup (?:etait|est)|preferez|mieux valait)\s+([a-z0-9#+=-]+)/i
-    );
-    if (recommendationMatch && context.best) {
-      const suggestedMoveRaw = recommendationMatch[1].replace(/[+#=]/g, '').trim().toLowerCase();
+    // 5. Contrôle des recommandations de coup alternatif (canoniques et non-canoniques, G1)
+    const recRegexes = [
+      /\b(?:vous devriez jouer|il fallait jouer|le meilleur coup (?:etait|est)|preferez|mieux valait)\s+([a-z0-9#+=-]+)/i,
+      /\b([a-z0-9#+=-]+)\s+(?:est|etait|serait)\s+(?:une\s+)?(?:bonne|meilleure|excellente)\s+idee/i,
+      /\b(?:jouer|en jouant)\s+([a-z0-9#+=-]+)\s+(?:etait|serait|permettait)/i,
+      /\bavec\s+([a-z0-9#+=-]+)\s*,?\s*vous\s+(?:pouviez|aviez|gardiez)/i,
+    ];
+
+    let suggestedMoveRaw: string | null = null;
+    for (const r of recRegexes) {
+      const m = norm.match(r);
+      if (m && m[1]) {
+        suggestedMoveRaw = m[1].replace(/[+#=]/g, '').trim().toLowerCase();
+        break;
+      }
+    }
+
+    if (suggestedMoveRaw && suggestedMoveRaw.length >= 2 && context.best) {
       const bestSanRaw = (context.best.san ?? '').replace(/[+#=]/g, '').trim().toLowerCase();
       const bestUciRaw = (context.best.uci ?? '').toLowerCase();
       const firstPvSan =
@@ -681,24 +714,22 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
           ? context.best.pv_san[0].replace(/[+#=]/g, '').trim().toLowerCase()
           : '';
 
-      if (suggestedMoveRaw.length >= 2) {
-        const matchesBest =
-          Boolean(bestSanRaw && suggestedMoveRaw === bestSanRaw) ||
-          Boolean(bestUciRaw && suggestedMoveRaw === bestUciRaw) ||
-          Boolean(firstPvSan && suggestedMoveRaw === firstPvSan) ||
-          (Boolean(bestSanRaw) && bestSanRaw.includes(suggestedMoveRaw)) ||
-          (Boolean(bestUciRaw) && bestUciRaw.includes(suggestedMoveRaw));
+      const matchesBest =
+        Boolean(bestSanRaw && suggestedMoveRaw === bestSanRaw) ||
+        Boolean(bestUciRaw && suggestedMoveRaw === bestUciRaw) ||
+        Boolean(firstPvSan && suggestedMoveRaw === firstPvSan) ||
+        (Boolean(bestSanRaw) && bestSanRaw.includes(suggestedMoveRaw)) ||
+        (Boolean(bestUciRaw) && bestUciRaw.includes(suggestedMoveRaw));
 
-        if (!matchesBest) {
-          return {
-            isValid: false,
-            reason: `Recommandation d'un coup alternatif ("${suggestedMoveRaw}") qui ne correspond pas au meilleur coup calculé (${context.best.san ?? 'meilleur coup inconnu'}).`,
-          };
-        }
+      if (!matchesBest) {
+        return {
+          isValid: false,
+          reason: `Recommandation d'un coup alternatif ("${suggestedMoveRaw}") qui ne correspond pas au meilleur coup calculé (${context.best.san ?? 'meilleur coup inconnu'}).`,
+        };
       }
     }
 
-    // 6. Contrôle des affirmations d'évaluation (position équilibrée vs déséquilibrée)
+    // 6. Contrôle des affirmations d'évaluation (équilibre, polarité et chiffres réels, G2)
     const claimsBalanced =
       /\b(position est equilibree|partie est egale|parfaitement egal|position nulle|egalite parfaite)\b/i.test(norm);
     if (claimsBalanced) {
@@ -715,6 +746,40 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         return {
           isValid: false,
           reason: `Affirmation de position équilibrée contredite par l'évaluation réelle (${displayScore}).`,
+        };
+      }
+    }
+
+    // Polarité du score du joueur
+    const playerColor = context.played.color;
+    const rawCpAfter = context.evaluation.after;
+    const playerPovScore =
+      rawCpAfter !== null ? (playerColor === 'white' ? rawCpAfter : -rawCpAfter) : null;
+
+    const claimsFavorable =
+      /\b(votre position est (?:bonne|excellente|tres bonne|gagnante|favorable)|vous (?:etes|avez l'?)avantage|avantage (?:net|decisif|confortable)|position avantageuse|vous dominez)\b/i.test(norm);
+    if (claimsFavorable) {
+      const isMateAgainst =
+        context.evaluation.mate_after !== null &&
+        (playerColor === 'white' ? context.evaluation.mate_after < 0 : context.evaluation.mate_after > 0);
+
+      if (isMateAgainst || (playerPovScore !== null && playerPovScore < -100)) {
+        return {
+          isValid: false,
+          reason: `Affirmation de position favorable contredite par l'évaluation négative (${playerPovScore !== null ? (playerPovScore / 100).toFixed(1) : 'mat contre vous'} pions).`,
+        };
+      }
+    }
+
+    // Perte chiffrée de pions
+    const lossMatch = norm.match(/\b(?:perte|perdez)\s+(?:de\s+)?(\d+(?:[.,]\d+)?)\s*pions?\b/i);
+    if (lossMatch && context.evaluation.player_loss_cp !== null) {
+      const claimedLoss = parseFloat(lossMatch[1].replace(',', '.'));
+      const realLoss = Math.max(0, context.evaluation.player_loss_cp / 100);
+      if (Math.abs(claimedLoss - realLoss) > 1.0) {
+        return {
+          isValid: false,
+          reason: `Affirmation de perte de ${claimedLoss} pion(s) contredite par la perte réelle de ${realLoss.toFixed(1)} pion(s).`,
         };
       }
     }
@@ -769,6 +834,24 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
             };
           }
         }
+      }
+    }
+
+    // G3 : Contrôle géométrique de menace directe (« pièce A menace pièce B »)
+    const threatRegex =
+      /\b(?:votre\s+)?(tour|cavalier|fou|dame|roi|pion)\s+(?:menace|attaque)\s+(?:le|la|l'|les)?\s*(tour|cavalier|fou|dame|roi|pion)\b/i;
+    const threatMatch = norm.match(threatRegex);
+    if (threatMatch && fenAfter) {
+      const targetRoleFr = threatMatch[2];
+      const targetRole = roleMap[targetRoleFr];
+      const oppColor: 'white' | 'black' = playerColor === 'white' ? 'black' : 'white';
+      const playedTo = context.played.uci.slice(2, 4);
+
+      if (targetRole && !doesPieceAttackRole(fenAfter, playedTo, targetRole, oppColor)) {
+        return {
+          isValid: false,
+          reason: `Affirmation de menace inventée : la pièce jouée en ${playedTo} n'attaque aucun(e) ${targetRoleFr} adverse.`,
+        };
       }
     }
 

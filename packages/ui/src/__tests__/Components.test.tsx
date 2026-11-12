@@ -200,6 +200,17 @@ describe('UI Components — Indispensable Suite', () => {
       fireEvent.click(listenBtn);
       expect(mockSpeak).toHaveBeenCalledTimes(1);
     });
+
+    it('affiche le badge "Meilleure défense" si classification best sous mat forcé (mateBefore < 0)', () => {
+      const recordDef: MoveRecord = {
+        ...sampleRecords[0],
+        classification: 'best',
+        mateBefore: -3,
+      };
+
+      render(<CoachBubble record={recordDef} />);
+      expect(screen.getByText('Meilleure défense')).toBeInTheDocument();
+    });
   });
 
   describe('BoardDemo', () => {

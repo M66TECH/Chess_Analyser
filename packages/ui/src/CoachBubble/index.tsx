@@ -117,7 +117,18 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
     );
   }
 
-  const style = CLASSIFICATION_STYLE[record.classification] ?? CLASSIFICATION_STYLE.good;
+  const isBestDefense =
+    record.classification === 'best' &&
+    typeof record.mateBefore === 'number' &&
+    record.mateBefore < 0;
+
+  const style = isBestDefense
+    ? {
+        badge: 'bg-teal-500/25 border-teal-500/50 text-teal-200',
+        glow: 'shadow-[0_0_18px_rgba(20,184,166,0.35)]',
+        label: 'Meilleure défense',
+      }
+    : (CLASSIFICATION_STYLE[record.classification] ?? CLASSIFICATION_STYLE.good);
   const theory = record.theory;
   const isSpeechSupported = SpeechService.getInstance().isSupported();
 
