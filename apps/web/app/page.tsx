@@ -70,6 +70,7 @@ export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanelTab>('coach');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [playerLevel, setPlayerLevelState] = useState<PlayerLevel>('intermediaire');
+  const [deepDiveLoadingNodeId, setDeepDiveLoadingNodeId] = useState<string | null>(null);
   const playerLevelRef = useRef<PlayerLevel>(playerLevel);
 
   useEffect(() => {
@@ -360,6 +361,20 @@ export default function Home() {
     if (activeIndex === undefined || activeIndex < 0 || activeIndex >= records.length) return undefined;
     return records[activeIndex];
   }, [records, activeIndex]);
+
+  const handleDeepDive = useCallback(async (record: MoveRecord) => {
+    const gm = gmRef.current;
+    if (!gm) return;
+    if (record.coachCard?.deepDive && record.coachCard.deepDive.level === gm.getPlayerLevel()) {
+      return;
+    }
+    setDeepDiveLoadingNodeId(record.nodeId);
+    try {
+      await gm.requestDeepDive(record.nodeId);
+    } finally {
+      setDeepDiveLoadingNodeId((prev) => (prev === record.nodeId ? null : prev));
+    }
+  }, []);
 
   const handleToggleSpeech = useCallback(() => {
     if (!activeRecord || !activeRecord.coachCard) return;
@@ -840,6 +855,8 @@ export default function Home() {
                 onShowDemo={handleShowDemo}
                 canShowDemo={canShowDemo(activeRecord)}
                 onHoverInsight={hoverStore.setShapes}
+                onDeepDive={handleDeepDive}
+                isDeepDiveLoading={Boolean(activeRecord && deepDiveLoadingNodeId === activeRecord.nodeId)}
               />
             </div>
           </div>

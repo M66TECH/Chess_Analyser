@@ -211,6 +211,71 @@ describe('UI Components — Indispensable Suite', () => {
       render(<CoachBubble record={recordDef} />);
       expect(screen.getByText('Meilleure défense')).toBeInTheDocument();
     });
+
+    it('affiche les 3 blocs, le bouton Approfondir, la zone dédiée et permet de replier sans rappel', () => {
+      const onDeepDive = vi.fn();
+      const baseRecord: MoveRecord = {
+        ...sampleRecords[0],
+        coachCard: {
+          headline: 'Centre solide',
+          idea: 'Votre pion occupe le centre.',
+          objective: 'Développez ensuite le cavalier.',
+          insights: [
+            { kind: 'played_move', text: 'Votre pion occupe le centre.' },
+            { kind: 'good_decision', text: 'Développez ensuite le cavalier.' },
+          ],
+          takeaway: 'Contrôlez les cases centrales dès l’ouverture.',
+          level: 'intermediaire',
+          source: 'llm',
+        },
+      };
+
+      const { rerender } = render(
+        <CoachBubble record={baseRecord} onDeepDive={onDeepDive} isDeepDiveLoading={false} />
+      );
+
+      expect(screen.getByText("L'idée")).toBeInTheDocument();
+      expect(screen.getByText('Votre objectif')).toBeInTheDocument();
+      expect(screen.getByText('À retenir')).toBeInTheDocument();
+
+      const deepBtn = screen.getByRole('button', { name: /Approfondir/i });
+      fireEvent.click(deepBtn);
+      expect(onDeepDive).toHaveBeenCalledTimes(1);
+      expect(onDeepDive).toHaveBeenCalledWith(baseRecord);
+
+      rerender(<CoachBubble record={baseRecord} onDeepDive={onDeepDive} isDeepDiveLoading={true} />);
+      expect(screen.getByText(/Analyse approfondie en cours/i)).toBeInTheDocument();
+
+      const withDeepDive: MoveRecord = {
+        ...baseRecord,
+        coachCard: {
+          ...baseRecord.coachCard!,
+          deepDive: {
+            summary: 'La prise d’espace centrale prépare le roque rapide.',
+            sections: [
+              { title: 'Conséquences', content: 'Le fou de cases blanches est immédiatement activé.' },
+            ],
+            level: 'intermediaire',
+            source: 'llm',
+          },
+        },
+      };
+
+      rerender(<CoachBubble record={withDeepDive} onDeepDive={onDeepDive} isDeepDiveLoading={false} />);
+      expect(screen.getByText('La prise d’espace centrale prépare le roque rapide.')).toBeInTheDocument();
+      expect(screen.getByText('Le fou de cases blanches est immédiatement activé.')).toBeInTheDocument();
+      // La réponse initiale reste bien visible
+      expect(screen.getByText('Votre pion occupe le centre.')).toBeInTheDocument();
+
+      // Replier puis déplier ne rappelle pas onDeepDive
+      const collapseBtn = screen.getByRole('button', { name: /Replier l'approfondissement/i });
+      fireEvent.click(collapseBtn);
+      expect(screen.queryByText('La prise d’espace centrale prépare le roque rapide.')).not.toBeInTheDocument();
+      const expandBtn = screen.getByRole('button', { name: /Approfondir/i });
+      fireEvent.click(expandBtn);
+      expect(screen.getByText('La prise d’espace centrale prépare le roque rapide.')).toBeInTheDocument();
+      expect(onDeepDive).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('BoardDemo', () => {

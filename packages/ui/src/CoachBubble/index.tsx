@@ -14,6 +14,9 @@ import {
   faPlay,
   faVolumeHigh,
   faStop,
+  faChevronDown,
+  faChevronUp,
+  faCompass,
 } from '@fortawesome/free-solid-svg-icons';
 import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
 import { SpeechService, type SpeechState } from '../sound/SpeechService';
@@ -31,6 +34,10 @@ export interface CoachBubbleProps {
    * Émet des surbrillances déterministes sur l'échiquier au survol d'une section.
    */
   onHoverInsight?: (shapes: BoardShape[] | null) => void;
+  /** Déclenche à la demande l'approfondissement pédagogique (Niveau 2). */
+  onDeepDive?: (record: MoveRecord) => Promise<unknown> | void;
+  /** `true` pendant la génération complémentaire « Approfondir ». */
+  isDeepDiveLoading?: boolean;
 }
 
 /** Icône + couleur par type d'explication (les 5 axes pédagogiques). */
@@ -54,10 +61,19 @@ const CLASSIFICATION_STYLE: Record<string, { badge: string; glow: string; label:
   book: { badge: 'bg-purple-400/20 border-purple-400/50 text-purple-200', glow: '', label: 'Théorie' },
 };
 
-export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, canShowDemo = false, onHoverInsight }) => {
+export const CoachBubble: React.FC<CoachBubbleProps> = ({
+  record,
+  onShowDemo,
+  canShowDemo = false,
+  onHoverInsight,
+  onDeepDive,
+  isDeepDiveLoading = false,
+}) => {
   const [speechState, setSpeechState] = useState<SpeechState>(() =>
     SpeechService.getInstance().getState()
   );
+  // Mémorise l'état ouvert/replié de l'approfondissement par coup (`nodeId`)
+  const [expandedDeepDiveByNode, setExpandedDeepDiveByNode] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const unsub = SpeechService.getInstance().subscribe(setSpeechState);
@@ -72,20 +88,48 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
   }, [record?.nodeId]);
 
   const card = record?.coachCard;
+  const deepDive = card?.deepDive;
+  const isDeepDiveExpanded = Boolean(
+    record && deepDive && (expandedDeepDiveByNode[record.nodeId] ?? true)
+  );
+
+  const handleDeepDiveClick = useCallback(() => {
+    if (!record || isDeepDiveLoading) return;
+    if (deepDive) {
+      setExpandedDeepDiveByNode((prev) => ({
+        ...prev,
+        [record.nodeId]: !(prev[record.nodeId] ?? true),
+      }));
+      return;
+    }
+    setExpandedDeepDiveByNode((prev) => ({ ...prev, [record.nodeId]: true }));
+    onDeepDive?.(record);
+  }, [record, deepDive, isDeepDiveLoading, onDeepDive]);
 
   const fullSpeechText = useMemo(() => {
     if (!record || !card) return '';
     const parts: string[] = [];
     if (card.headline) parts.push(card.headline);
-    for (const insight of card.insights) {
-      const st = INSIGHT_STYLE[insight.kind];
-      parts.push(`${st ? st.label : ''} : ${insight.text}`);
+    if (card.idea || card.objective) {
+      if (card.idea) parts.push(`L'idée : ${card.idea}`);
+      if (card.objective) parts.push(`Votre objectif : ${card.objective}`);
+    } else {
+      for (const insight of card.insights) {
+        const st = INSIGHT_STYLE[insight.kind];
+        parts.push(`${st ? st.label : ''} : ${insight.text}`);
+      }
     }
     if (card.takeaway) {
       parts.push(`À retenir : ${card.takeaway}`);
     }
+    if (isDeepDiveExpanded && deepDive) {
+      if (deepDive.summary) parts.push(deepDive.summary);
+      for (const sec of deepDive.sections) {
+        parts.push(`${sec.title} : ${sec.content}`);
+      }
+    }
     return parts.join(' ');
-  }, [record, card]);
+  }, [record, card, isDeepDiveExpanded, deepDive]);
 
   const isCurrentCardSpeaking =
     speechState.isSpeaking &&
@@ -218,56 +262,154 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
               </div>
             )}
 
-            <div className="space-y-2">
-              {card.insights.map((insight, i) => {
-                const st = INSIGHT_STYLE[insight.kind];
-                const snippetText = `${st ? st.label : ''} : ${insight.text}`;
-                const isSnippetSpeaking =
-                  speechState.isSpeaking && speechState.currentText === snippetText;
-
-                return (
+            {/* Niveau 1 : 3 blocs structurés (L'idée, Votre objectif, À retenir) ou repli insights */}
+            {card.idea || card.objective ? (
+              <div className="space-y-2">
+                {card.idea && (
                   <div
-                    key={`${insight.kind}-${i}`}
-                    className={`border-l-2 ${st.ring} pl-2.5 py-1 px-1.5 rounded-r transition-colors hover:bg-slate-800/50 cursor-pointer group`}
+                    className={`border-l-2 ${
+                      card.insights[0] ? INSIGHT_STYLE[card.insights[0].kind].ring : 'border-slate-600/60'
+                    } pl-2.5 py-1 px-1.5 rounded-r transition-colors hover:bg-slate-800/50 cursor-pointer group`}
                     onMouseEnter={() => {
                       if (record && onHoverInsight) {
-                        const shapes = computeDeterministicHighlights(insight.kind, record);
-                        onHoverInsight(shapes);
+                        const kind = card.insights[0]?.kind ?? 'played_move';
+                        onHoverInsight(computeDeterministicHighlights(kind, record));
                       }
                     }}
-                    onMouseLeave={() => {
-                      onHoverInsight?.(null);
-                    }}
+                    onMouseLeave={() => onHoverInsight?.(null)}
                   >
                     <div className="flex items-center justify-between">
-                      <div className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 flex items-center gap-1.5 ${st.color}`}>
-                        <FontAwesomeIcon icon={st.icon} className="w-3 h-3 shrink-0" />
-                        <span>{st.label}</span>
+                      <div className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 flex items-center gap-1.5 text-slate-200">
+                        <FontAwesomeIcon
+                          icon={card.insights[0] ? INSIGHT_STYLE[card.insights[0].kind].icon : faChessPawn}
+                          className="w-3 h-3 shrink-0 text-indigo-300"
+                        />
+                        <span>L&apos;idée</span>
                       </div>
                       {isSpeechSupported && (
                         <button
                           type="button"
-                          onClick={(e) => handleSpeakSnippet(e, snippetText)}
-                          title={isSnippetSpeaking ? "Arrêter" : "Écouter ce point"}
-                          aria-label={`Écouter : ${st.label}`}
+                          onClick={(e) => handleSpeakSnippet(e, `L'idée : ${card.idea}`)}
+                          title="Écouter ce point"
+                          aria-label="Écouter : L'idée"
                           className={`p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ${
-                            isSnippetSpeaking
+                            speechState.isSpeaking && speechState.currentText === `L'idée : ${card.idea}`
                               ? 'opacity-100 text-indigo-400'
                               : 'text-slate-400 hover:text-indigo-300'
                           }`}
                         >
-                          <FontAwesomeIcon icon={isSnippetSpeaking ? faStop : faVolumeHigh} className="text-[10px]" />
+                          <FontAwesomeIcon
+                            icon={
+                              speechState.isSpeaking && speechState.currentText === `L'idée : ${card.idea}`
+                                ? faStop
+                                : faVolumeHigh
+                            }
+                            className="text-[10px]"
+                          />
                         </button>
                       )}
                     </div>
-                    <p className="text-xs text-slate-300 leading-relaxed">{insight.text}</p>
+                    <p className="text-xs text-slate-300 leading-relaxed">{card.idea}</p>
                   </div>
-                );
-              })}
-            </div>
+                )}
+
+                {card.objective && (
+                  <div
+                    className={`border-l-2 ${
+                      card.insights[1] ? INSIGHT_STYLE[card.insights[1].kind].ring : 'border-emerald-600/50'
+                    } pl-2.5 py-1 px-1.5 rounded-r transition-colors hover:bg-slate-800/50 cursor-pointer group`}
+                    onMouseEnter={() => {
+                      if (record && onHoverInsight) {
+                        const kind = card.insights[1]?.kind ?? 'good_decision';
+                        onHoverInsight(computeDeterministicHighlights(kind, record));
+                      }
+                    }}
+                    onMouseLeave={() => onHoverInsight?.(null)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 flex items-center gap-1.5 text-emerald-300">
+                        <FontAwesomeIcon icon={faBullseye} className="w-3 h-3 shrink-0" />
+                        <span>Votre objectif</span>
+                      </div>
+                      {isSpeechSupported && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleSpeakSnippet(e, `Votre objectif : ${card.objective}`)}
+                          title="Écouter ce point"
+                          aria-label="Écouter : Votre objectif"
+                          className={`p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ${
+                            speechState.isSpeaking && speechState.currentText === `Votre objectif : ${card.objective}`
+                              ? 'opacity-100 text-indigo-400'
+                              : 'text-slate-400 hover:text-indigo-300'
+                          }`}
+                        >
+                          <FontAwesomeIcon
+                            icon={
+                              speechState.isSpeaking && speechState.currentText === `Votre objectif : ${card.objective}`
+                                ? faStop
+                                : faVolumeHigh
+                            }
+                            className="text-[10px]"
+                          />
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">{card.objective}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {card.insights.map((insight, i) => {
+                  const st = INSIGHT_STYLE[insight.kind];
+                  const snippetText = `${st ? st.label : ''} : ${insight.text}`;
+                  const isSnippetSpeaking =
+                    speechState.isSpeaking && speechState.currentText === snippetText;
+
+                  return (
+                    <div
+                      key={`${insight.kind}-${i}`}
+                      className={`border-l-2 ${st.ring} pl-2.5 py-1 px-1.5 rounded-r transition-colors hover:bg-slate-800/50 cursor-pointer group`}
+                      onMouseEnter={() => {
+                        if (record && onHoverInsight) {
+                          const shapes = computeDeterministicHighlights(insight.kind, record);
+                          onHoverInsight(shapes);
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        onHoverInsight?.(null);
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 flex items-center gap-1.5 ${st.color}`}>
+                          <FontAwesomeIcon icon={st.icon} className="w-3 h-3 shrink-0" />
+                          <span>{st.label}</span>
+                        </div>
+                        {isSpeechSupported && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleSpeakSnippet(e, snippetText)}
+                            title={isSnippetSpeaking ? "Arrêter" : "Écouter ce point"}
+                            aria-label={`Écouter : ${st.label}`}
+                            className={`p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ${
+                              isSnippetSpeaking
+                                ? 'opacity-100 text-indigo-400'
+                                : 'text-slate-400 hover:text-indigo-300'
+                            }`}
+                          >
+                            <FontAwesomeIcon icon={isSnippetSpeaking ? faStop : faVolumeHigh} className="text-[10px]" />
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 leading-relaxed">{insight.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {card.takeaway && (
-              <div className="mt-3 pt-3 border-t border-slate-700/50">
+              <div className="mt-2 pt-2.5 border-t border-slate-700/50">
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-300 flex items-center gap-1.5">
                     <FontAwesomeIcon icon={faLightbulb} className="w-3 h-3 text-amber-400" />
@@ -297,16 +439,98 @@ export const CoachBubble: React.FC<CoachBubbleProps> = ({ record, onShowDemo, ca
               </div>
             )}
 
-            {/* Bouton de démonstration coup par coup */}
-            {canShowDemo && onShowDemo && (
-              <button
-                onClick={() => onShowDemo(record)}
-                className="mt-1 w-full px-3 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30 transition-colors flex items-center justify-center gap-2"
-              >
-                <FontAwesomeIcon icon={faPlay} className="text-xs" aria-hidden="true" />
-                <span>Montrer sur l’échiquier</span>
-              </button>
-            )}
+            {/* Boutons d'action : Approfondir (Niveau 2) + Démonstration */}
+            <div className="pt-1 flex flex-col gap-2">
+              {(onDeepDive || deepDive) && (
+                <button
+                  type="button"
+                  onClick={handleDeepDiveClick}
+                  disabled={isDeepDiveLoading}
+                  aria-expanded={isDeepDiveExpanded}
+                  className="w-full px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-slate-700/90 disabled:opacity-70 text-indigo-200 border border-indigo-500/35 transition-colors flex items-center justify-center gap-2"
+                >
+                  {isDeepDiveLoading ? (
+                    <>
+                      <span
+                        className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"
+                        aria-hidden="true"
+                      />
+                      <span>Analyse approfondie en cours…</span>
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon
+                        icon={isDeepDiveExpanded ? faChevronUp : faChevronDown}
+                        className="text-[11px]"
+                        aria-hidden="true"
+                      />
+                      <span>{isDeepDiveExpanded ? "Replier l'approfondissement" : 'Approfondir'}</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Zone d'approfondissement distincte (Niveau 2) */}
+              {isDeepDiveExpanded && deepDive && (
+                <section
+                  aria-label="Analyse approfondie"
+                  className="rounded-lg bg-slate-900/75 border border-indigo-500/30 p-3 space-y-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                      <FontAwesomeIcon icon={faCompass} className="w-3 h-3" aria-hidden="true" />
+                      <span>Approfondissement</span>
+                    </div>
+                    {deepDive.degraded && (
+                      <span className="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">
+                        Analyse déterministe locale
+                      </span>
+                    )}
+                  </div>
+
+                  {deepDive.summary && (
+                    <p className="text-xs text-slate-200 font-medium leading-relaxed">
+                      {deepDive.summary}
+                    </p>
+                  )}
+
+                  <div className="space-y-2">
+                    {deepDive.sections.map((sec, idx) => (
+                      <div key={`${sec.title}-${idx}`} className="border-l-2 border-indigo-500/40 pl-2.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-200 mb-0.5">
+                          {sec.title}
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">{sec.content}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {deepDive.variants && deepDive.variants.length > 0 && (
+                    <div className="pt-2 border-t border-slate-700/50 space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+                        Variantes vérifiées
+                      </div>
+                      {deepDive.variants.map((variant, idx) => (
+                        <p key={idx} className="text-[11px] text-slate-300 leading-relaxed">
+                          {variant}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* Bouton de démonstration coup par coup */}
+              {canShowDemo && onShowDemo && (
+                <button
+                  onClick={() => onShowDemo(record)}
+                  className="w-full px-3 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30 transition-colors flex items-center justify-center gap-2"
+                >
+                  <FontAwesomeIcon icon={faPlay} className="text-xs" aria-hidden="true" />
+                  <span>Montrer sur l’échiquier</span>
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="h-full min-h-[140px] flex flex-col items-center justify-center text-slate-500 gap-3">

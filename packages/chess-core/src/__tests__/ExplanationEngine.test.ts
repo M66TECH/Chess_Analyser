@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
+import { ExplanationEngine, countWords, INITIAL_CARD_MAX_WORDS } from '../pedagogy/ExplanationEngine';
 import { RiverAPI } from '../pedagogy/RiverAPI';
 import { buildExplanationContext, estimatePhase, pieceToFr } from '../pedagogy/ExplanationContext';
 import type { MoveRecord } from '../pedagogy/types';
@@ -499,5 +499,109 @@ describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
     };
     const res = ExplanationEngine.verifyCardFactualConsistency(card, ctxWithBest.tactical_facts, ctxWithBest);
     expect(res.isValid).toBe(true);
+  });
+});
+
+describe('Coach IA v1.1 : narration concise (<= 65 mots) et Approfondir', () => {
+  beforeEach(() => {
+    ExplanationEngine.resetLlmBudget();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    ExplanationEngine.resetLlmBudget();
+  });
+
+  it('impose le plafond strict de 65 mots réunis sur les 3 blocs initiaux (LLM trop verbeux)', async () => {
+    const longWords = Array.from({ length: 35 }, (_, i) => `mot${i}`).join(' ');
+    vi.spyOn(RiverAPI, 'complete').mockResolvedValue(
+      JSON.stringify({
+        headline: 'Développement central',
+        idea: `Votre pion occupe le centre ${longWords}.`,
+        objective: `Préparez ensuite le développement ${longWords}.`,
+        takeaway: `Contrôlez toujours le centre avant de lancer une attaque ${longWords}.`,
+      })
+    );
+
+    const card = await ExplanationEngine.generateCard(record(), 'intermediaire');
+    expect(card.degraded).toBeUndefined();
+    expect(card.idea).toBeDefined();
+    expect(card.objective).toBeDefined();
+    const totalWords =
+      countWords(card.idea ?? '') + countWords(card.objective ?? '') + countWords(card.takeaway);
+    expect(totalWords).toBeLessThanOrEqual(INITIAL_CARD_MAX_WORDS);
+  });
+
+  it('buildLocalCard génère 3 blocs complémentaires sous 65 mots et adaptés au type de coup', () => {
+    const bookRec = record({
+      classification: 'book',
+      theory: { isTheory: true, inBook: true, openingName: "King's Pawn Game", frequency: 0.5, games: 1000 },
+    });
+    const bookCard = ExplanationEngine.buildLocalCard(bookRec, 'debutant');
+    expect(bookCard.idea).toBeTruthy();
+    expect(bookCard.objective).toBeTruthy();
+    expect(bookCard.takeaway).toBeTruthy();
+    const total =
+      countWords(bookCard.idea ?? '') +
+      countWords(bookCard.objective ?? '') +
+      countWords(bookCard.takeaway);
+    expect(total).toBeLessThanOrEqual(INITIAL_CARD_MAX_WORDS);
+  });
+
+  it('generateDeepDive transmet la réponse initiale, valide le français et consomme 1 slot uniquement sur succès', async () => {
+    const spy = vi.spyOn(RiverAPI, 'complete').mockResolvedValue(
+      JSON.stringify({
+        summary: 'Ce coup libère la diagonale du fou et empêche toute pression immédiate sur e4.',
+        sections: [
+          {
+            title: 'Logique et conséquences',
+            content: 'En avançant le pion en e4, vous gagnez de l’espace et ouvrez la colonne pour la dame et le fou.',
+          },
+          {
+            title: 'Plans à envisager',
+            content: 'Développez rapidement vos cavaliers vers le centre puis mettez le roi à l’abri.',
+          },
+        ],
+        variants: ['Votre pion avance en e4, puis votre cavalier peut rejoindre f3.'],
+      })
+    );
+
+    const initialCard = ExplanationEngine.buildLocalCard(record(), 'intermediaire');
+    const deep = await ExplanationEngine.generateDeepDive(record(), initialCard, 'avance');
+
+    expect(deep.degraded).toBeUndefined();
+    expect(deep.source).toBe('llm');
+    expect(deep.sections).toHaveLength(2);
+    expect(ExplanationEngine.remainingLlmBudget).toBe(199);
+
+    const userPrompt = spy.mock.calls[0][0] as string;
+    expect(userPrompt).toContain(initialCard.headline);
+    expect(userPrompt).toContain(initialCard.takeaway);
+    expect(userPrompt).toContain('"classification": "best"');
+  });
+
+  it('rejette une variante hallucinée ou illégale dans Approfondir et bascule sur fallbackDeepDive', async () => {
+    vi.spyOn(RiverAPI, 'complete').mockResolvedValue(
+      JSON.stringify({
+        summary: 'Analyse de la position.',
+        sections: [{ title: 'Idée', content: 'Votre pion contrôle le centre.' }],
+        // Qh8 est totalement illégal et absent des PV calculées
+        variants: ['Qh8#'],
+      })
+    );
+
+    const initialCard = ExplanationEngine.buildLocalCard(record({ bestPv: ['e2e4', 'e7e5'] }), 'intermediaire');
+    const deep = await ExplanationEngine.generateDeepDive(
+      record({ bestPv: ['e2e4', 'e7e5'] }),
+      initialCard,
+      'intermediaire'
+    );
+
+    expect(deep.degraded).toBe(true);
+    expect(deep.source).toBe('fallback');
+    expect(deep.sections.length).toBeGreaterThan(0);
+    expect(ExplanationEngine.remainingLlmBudget).toBe(200);
   });
 });

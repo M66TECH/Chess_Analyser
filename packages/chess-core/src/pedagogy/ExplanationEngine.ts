@@ -4,6 +4,8 @@ import {
   buildExplanationContext,
   pieceToFr,
   type CoachCard,
+  type CoachDeepDive,
+  type CoachDeepDiveSection,
   type ExplanationContext,
   type Insight,
   type PlayerLevel,
@@ -12,6 +14,15 @@ import {
 import { MotifEngine } from './MotifEngine';
 import { describeMove } from './MoveNarrator';
 import type { MoveRecord } from './types';
+
+export const INITIAL_CARD_MAX_WORDS = 65;
+
+/** Compte le nombre de mots d'un texte (utile pour appliquer le plafond de 65 mots). */
+export function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
 
 import { parseFen, makeFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -223,41 +234,61 @@ function doesPieceAttackRole(
  */
 export class ExplanationEngine {
   private static readonly SYSTEM_PROMPT = `# Rôle
-Tu es ChessCoach, entraîneur d'échecs pédagogique et factuel. Tu lis une analyse déjà calculée (Stockfish + Lichess + faits géométriques vérifiés). Tu ne recalcules rien. Adapte ton ton et la précision des concepts au niveau du joueur indiqué.
+Tu es ChessCoach, entraîneur d'échecs pédagogique et factuel. Tu traduis une analyse déjà calculée (Stockfish + Lichess + faits géométriques vérifiés) sans jamais rien inventer.
 
-# Règle absolue : court et simple
+# Principe directeur (Niveau 1 : Réponse initiale)
+Dire l'essentiel immédiatement : 3 blocs complémentaires et sans répétition :
+- headline : titre très court (2 à 6 mots).
+- idea (BLOC 1 — L'IDÉE) : pourquoi le coup est intéressant ou pose problème, et ce qu'il change concrètement ici.
+- objective (BLOC 2 — VOTRE OBJECTIF) : ce que le joueur qui a joué ce coup (played.color) doit chercher à accomplir ensuite (ou aurait dû jouer si le coup est une erreur, sans jamais lui conseiller le coup adverse refutation_pv_san).
+- takeaway (BLOC 3 — À RETENIR) : un principe échiquéen simple, utile et réutilisable dans d'autres parties.
+
+# Limite stricte : 65 mots MAXIMUM
+- Le total cumulé des 3 blocs (idea + objective + takeaway) ne doit JAMAIS dépasser 65 mots (hors titres).
+- Aucune répétition entre les blocs, aucun remplissage, aucun conseil générique.
+
+# Règles de rédaction & preuves
 - N'écris jamais une notation brute seule : ni « Nf3 », ni « Bxc6 », ni « a4 », ni « e2e4 ».
-- Nomme TOUJOURS la pièce en français (pion, cavalier, fou, tour, dame, roi) et indique sa case d'arrivée en clair : « le cavalier va en f3 ».
-- Évite le jargon chiffré (« centipawn »). Reste direct : une idée = une phrase courte.
-
-# Longueur imposée
-- headline : 10 mots maximum. C'est le conseil principal.
-- insights : 1 ou 2 maximum (jamais 3 ni 5). Chaque text ≤ 20 mots.
-- takeaway : une seule phrase courte, actionnable.
-- Si tu ne peux pas faire court, NE DIS RIEN de plus : la démonstration visuelle remplace l'explication.
-
-# Structure conseillée
-1. Le PROBLÈME, en une phrase (« votre dame peut être prise »).
-2. L'ACTION recommandée, en une phrase (« mettez-la en sécurité en d1 »).
-C'est tout. Le reste est inutile.
-
-# Preuves
-Le JSON fourni est la seule source. N'invente jamais une pièce en prise, un clouage ou une fourchette absents de tactical_facts. Si best.san existe, tu peux le décrire en français (« le fou va en c4 ») mais jamais en notation seule.
-Si opening.is_theory_move est vrai, ne présente pas le coup comme une erreur.
-
-# Séquences de mat
-- created : « le mat devient inévitable ». lost : « vous aviez un mat et il est perdu ». delayed : pas une erreur.
+- Nomme la pièce en français (pion, cavalier, fou, tour, dame, roi) et sa case (« le cavalier va en f3 »).
+- Évite le jargon chiffré (« centipawn »).
+- Le JSON fourni est la seule source : n'invente jamais une pièce en prise, un clouage (n'emploie « clouage » / « cloué » que si tactical_facts.new_pins_* n'est pas vide ; ex. sur Fou en b5 face au pion d7, le cavalier c6 n'est PAS cloué), une fourchette ou une variante absents.
+- Si opening.is_theory_move est vrai, ne présente jamais le coup comme une erreur.
+- Séquences de mat : created → « le mat menace » ; lost → « un mat a été manqué » ; delayed → le mat reste forcé.
 
 # Langue
-Réponds EXCLUSIVEMENT en français : aucun mot anglais dans les textes.
-Adresse-toi au joueur en VOUVOYANT (« vous », « votre ») : jamais « tu » ni « ton ».
-Les CLÉS du JSON restent en anglais pour la machine (headline, insights, kind, text, takeaway) — c'est le seul anglais autorisé.
+Réponds EXCLUSIVEMENT en français naturel et fluide, en VOUVOYANT le joueur (« vous », « votre »), jamais « tu » ni « ton ». Écris « pièce » (jamais « morceau ») et « colonne e » (jamais « file »).
+Les clés JSON restent en anglais (headline, idea, objective, takeaway).
 
 # Format
 Réponds UNIQUEMENT par un objet JSON valide (sans balise <think>, ni texte avant ou après) :
-{"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
-kinds autorisés : played_move, missed_move, mistake, good_decision, consequence.
-Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, pièce laissée sans défense, sécurité du roi, contrôle du centre) en français naturel.`;
+{"headline":"...","idea":"...","objective":"...","takeaway":"..."}`;
+
+  private static readonly DEEP_DIVE_SYSTEM_PROMPT = `# Rôle
+Tu es ChessCoach en mode APPROFONDISSEMENT (Niveau 2). Le joueur a déjà lu l'explication courte initiale et clique sur « Approfondir » pour vraiment comprendre la position.
+
+# Mission pédagogique
+Produis une véritable analyse complémentaire : NE RÉPÈTE PAS ni ne paraphrase les trois phrases initiales déjà affichées.
+Sélectionne uniquement les dimensions pertinentes pour ce coup parmi :
+1. Logique échiquéenne précise et relations de cause à effet (pourquoi l'idée fonctionne ou échoue).
+2. Conséquences concrètes sur la position (activité, cases faibles, structure, sécurité du roi).
+3. Idées stratégiques et tactiques pertinentes, menaces et ressources de l'adversaire.
+4. Comparaison avec la meilleure alternative calculée lorsqu'elle apporte de la valeur.
+5. Variantes importantes uniquement si disponibles dans le JSON (en français clair, sans jamais inventer de coups).
+6. Erreurs de raisonnement possibles et plans à envisager ensuite.
+
+# Règles strictes de fiabilité
+- Le JSON fourni est la SEULE vérité : n'invente AUCUNE variante, AUCUNE menace fictive, AUCUN coup non calculé, AUCUNE pièce ou case absente.
+- Dans « sections », ne décris QUE les pièces réellement présentes sur l'échiquier et les coups présents dans « pv_san » ou « refutation_pv_san » ; ne cite pas de coups futurs hypothétiques hors JSON (ex. pas de « fou en c4 » si aucun fou n'y va dans le JSON).
+- Ne confonds jamais qualité du coup et statut théorique.
+- N'écris JAMAIS les mots anglais « White » ou « Black » : écris toujours « les Blancs » et « les Noirs ».
+- N'écris pas de notation brute seule (ni « Nf3 », ni « ...d5 », ni « e2e4 ») : nomme toujours la pièce en français et la case (« le cavalier en f3 », « pousser le pion en d5 »).
+- Adapte la précision des concepts au niveau du joueur (debutant / intermediaire / avance).
+- Structure claire et sans répétition ni longs paragraphes artificiels.
+
+# Langue et format
+Français exclusif, vouvoiement (« vous », « votre »). Écris « pièce » (jamais « morceau ») et « colonne » (jamais « file »).
+Réponds UNIQUEMENT par un objet JSON valide (sans balise <think>, ni texte autour) :
+{"summary":"Synthèse causale complémentaire en 1 phrase","sections":[{"title":"...","content":"..."}],"variants":["Suite vérifiée en français clair si pertinente"]}`;
 
   /**
    * Budget LLM par session (P1-9). Compteur statique : une session =
@@ -321,15 +352,17 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
       }
 
       const parsed = this.parseCard(raw);
+      const parsedText = parsed
+        ? [parsed.headline, parsed.idea ?? '', parsed.objective ?? '', parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' ')
+        : '';
 
-      if (parsed && isFrenchText([parsed.headline, parsed.takeaway, ...parsed.insights.map(i => i.text)].join(' '))) {
+      if (parsed && isFrenchText(parsedText)) {
         // P0.1 : Contrôle de cohérence factuelle avec VerifiedTacticalFacts
         const consistency = ExplanationEngine.verifyCardFactualConsistency(parsed, context.tactical_facts, context);
         if (consistency.isValid) {
           // Consomme le budget UNIQUEMENT sur succès (un coup = un appel réussi).
           this.llmCallsThisSession++;
-          // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
-          // n'est pas nécessaire : carte LLM complète, non dégradée.
+          // Le prompt demande la brièveté ; le code la GARANTIT (max 65 mots réunis).
           return applyMoodLimits({ ...parsed, level, source: 'llm' }, context);
         }
         console.warn(`[ExplanationEngine] Fiche LLM rejetée pour incohérence factuelle (${consistency.reason}), bascule sur fallback local.`);
@@ -345,6 +378,68 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
       console.error('[ExplanationEngine] LLM indisponible, fallback local avec badge:', error);
       const local = this.fallbackCard(context, level);
       return { ...local, degraded: true, source: 'fallback' };
+    }
+  }
+
+  /**
+   * Niveau 2 (« Approfondir ») : génère une analyse pédagogique complémentaire
+   * à la demande, en s'appuyant sur le contexte complet et la réponse initiale.
+   */
+  public static async generateDeepDive(
+    record: MoveRecord,
+    initialCard: CoachCard,
+    level: PlayerLevel = 'intermediaire',
+    previousClassification?: string | null
+  ): Promise<CoachDeepDive> {
+    const context = this.buildContext(record, previousClassification);
+
+    if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) {
+      return { ...this.fallbackDeepDive(context, initialCard, level), degraded: true, source: 'fallback' };
+    }
+
+    try {
+      const raw = await RiverAPI.complete(
+        this.buildDeepDivePrompt(context, initialCard, level),
+        this.DEEP_DIVE_SYSTEM_PROMPT,
+        {
+          temperature: 0.35,
+          maxTokens: 1600,
+        }
+      );
+
+      if (raw.startsWith('Le coach') || raw.startsWith('Impossible') || raw.startsWith('Analyse non disponible')) {
+        console.info('[ExplanationEngine] Passerelle LLM indisponible pour Approfondir, bascule déterministe.');
+        return { ...this.fallbackDeepDive(context, initialCard, level), degraded: true, source: 'fallback' };
+      }
+
+      const parsed = this.parseDeepDive(raw);
+      const fullDeepText = parsed
+        ? [
+            parsed.summary ?? '',
+            ...parsed.sections.flatMap(s => [s.title, s.content]),
+            ...(parsed.variants ?? []),
+          ].join(' ')
+        : '';
+
+      if (parsed && isFrenchText(fullDeepText)) {
+        const consistency = ExplanationEngine.verifyDeepDiveFactualConsistency(
+          parsed,
+          context.tactical_facts,
+          context
+        );
+        if (consistency.isValid) {
+          this.llmCallsThisSession++;
+          return { ...parsed, level, source: 'llm' };
+        }
+        console.warn(`[ExplanationEngine] Approfondissement LLM rejeté (${consistency.reason}), bascule déterministe.`);
+      } else {
+        console.warn('[ExplanationEngine] Approfondissement LLM invalide ou non français, bascule déterministe.');
+      }
+
+      return { ...this.fallbackDeepDive(context, initialCard, level), degraded: true, source: 'fallback' };
+    } catch (error) {
+      console.error('[ExplanationEngine] Approfondissement LLM indisponible, repli local:', error);
+      return { ...this.fallbackDeepDive(context, initialCard, level), degraded: true, source: 'fallback' };
     }
   }
 
@@ -410,47 +505,94 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
   private static buildPrompt(context: ExplanationContext, level: PlayerLevel): string {
     const levelInstructions: Record<PlayerLevel, string> = {
       debutant:
-        "Niveau du joueur : débutant. Phrases très courtes, concrètes, sans jargon technique. Explique simplement l'idée du coup.",
+        "Niveau du joueur : débutant. Phrases très courtes, concrètes, sans jargon technique.",
       intermediaire:
-        "Niveau du joueur : intermédiaire. Nomme les motifs tactiques (fourchette, clouage, développement, sécurité du roi) de façon concise.",
+        "Niveau du joueur : intermédiaire. Nomme les motifs tactiques utiles (fourchette, clouage, développement, sécurité du roi) sans délayage.",
       avance:
-        "Niveau du joueur : avancé. Donne une analyse stratégique et tactique précise (plans, activité des pièces, cases faibles, initiative), de manière concise et directe.",
+        "Niveau du joueur : avancé. Analyse stratégique et tactique précise (plans, activité, cases faibles, initiative) tout en restant ultra-concis.",
     };
 
     const mood = moodFor(context);
-    const maxInsights = mood.maxInsights;
-    const maxWords = mood.maxWordsPerInsight;
+    const guidance = resolveMoveGuidance(context);
 
     return `${levelInstructions[level]}
 
-# Ton imposé pour ce cas précis
-${mood.tone}
+# Adaptation au type de coup (${guidance.label})
+- Axe principal attendu pour la réponse initiale : ${guidance.initialFocus}
+- Registre : ${mood.tone}
 
-# Longueur imposée (ne pas dépasser)
-- headline : ${mood.maxHeadlineWords} mots maximum.
-- insights : ${maxInsights} maximum, ${maxWords} mots maximum chacun.
-- takeaway : une seule phrase de ${mood.maxTakeawayWords} mots maximum.
-- Si tu ne tiens pas dans ces limites, écris moins, pas plus long.
+# Structure stricte en 3 blocs (MAXIMUM 65 mots réunis hors titres)
+- headline : titre bref (2 à 6 mots).
+- idea (BLOC 1 — L'IDÉE) : pourquoi le coup est intéressant ou pose problème ici (16 à 22 mots max).
+- objective (BLOC 2 — VOTRE OBJECTIF) : ce que vous devez chercher à accomplir ensuite dans cette position (14 à 18 mots max).
+- takeaway (BLOC 3 — À RETENIR) : principe échiquéen simple et réutilisable (10 à 14 mots max).
+- Aucune répétition entre les blocs. Fais des phrases complètes et courtes : total (idea + objective + takeaway) ≤ ${INITIAL_CARD_MAX_WORDS} mots (vise ~45 à 55 mots pour ne pas être coupé).
 
 # Langue et adresse
-- Réponds EXCLUSIVEMENT en français : aucun mot anglais.
-- Vouvoie le joueur (« vous », « votre »), jamais « tu » ni « ton ».
-
-# Interdits absolus
-- Ne rejoue PAS les coups toi-même : l'application affiche la démonstration sur l'échiquier.
-- N'écris aucune notation : ni « Nf3 », ni « e2e4 », ni « Bxc5 ».
-- Pas de liste à puces, pas de paragraphe, pas de répétition.
-
-# Séquence à ne pas décrire en texte
-Les coups sont montrés visuellement (${context.best?.pv_san?.length ?? 0} coups).
-Ne les raconte pas : commente seulement l'idée en une phrase.
+- EXCLUSIVEMENT en français, vouvoiement (« vous », « votre »).
+- Aucune notation brute seule (« Nf3 », « e2e4 », « Bxc5 »). Pas de liste à puces.
+- Ne raconte pas les variantes coup par coup dans la réponse initiale.
 
 Dossier d'analyse (JSON) :
 \`\`\`json
 ${JSON.stringify(context, null, 2)}
 \`\`\`
 
-Écris la fiche JSON demandée.`;
+Écris uniquement l'objet JSON demandé.`;
+  }
+
+  private static buildDeepDivePrompt(
+    context: ExplanationContext,
+    initialCard: CoachCard,
+    level: PlayerLevel
+  ): string {
+    const levelInstructions: Record<PlayerLevel, string> = {
+      debutant:
+        "Niveau du joueur : débutant. Explique les relations de cause à effet simplement, avec des termes clairs et sans jargon superflu.",
+      intermediaire:
+        "Niveau du joueur : intermédiaire. Détaille les motifs tactiques, les faiblesses, la sécurité du roi et l'activité des pièces.",
+      avance:
+        "Niveau du joueur : avancé. Propose une analyse positionnelle et dynamique approfondie (plans à moyen terme, déséquilibres, prophylaxie, calcul concret).",
+    };
+
+    const guidance = resolveMoveGuidance(context);
+    const initialSummary = {
+      headline: initialCard.headline,
+      idea: initialCard.idea ?? initialCard.insights[0]?.text ?? '',
+      objective: initialCard.objective ?? initialCard.insights[1]?.text ?? '',
+      takeaway: initialCard.takeaway,
+    };
+
+    return `${levelInstructions[level]}
+
+# Adaptation au type de coup (${guidance.label})
+- Focus demandé pour l'approfondissement : ${guidance.deepDiveFocus}
+${guidance.tacticalNote ? `- Élément tactique/défensif détecté : ${guidance.tacticalNote}` : ''}
+
+# Réponse initiale déjà affichée (NE PAS RÉPÉTER NI PARAPHRASER)
+\`\`\`json
+${JSON.stringify(initialSummary, null, 2)}
+\`\`\`
+
+# Ce que l'approfondissement doit apporter (sélectionner uniquement ce qui est pertinent ici)
+1. Logique échiquéenne précise et enchaînement cause → conséquence du coup joué.
+2. Conséquences concrètes sur la position (développement, structure de pions, cases faibles, sécurité du roi).
+3. Menaces et ressources réelles de l'adversaire (appuyées sur tactical_facts et refutation_pv_san si présents).
+4. Comparaison précise avec la meilleure alternative (context.best) lorsqu'elle est différente.
+5. Variantes calculées importantes uniquement si présentes dans context.best.pv_san ou tactical_facts.refutation_pv_san (sans jamais en inventer d'autres).
+6. Pièges de raisonnement possibles et plans à envisager pour la suite.
+
+# Contraintes
+- 2 à 4 sections claires maximum, concises et riches en explications causales (pas de blabla ni remplissage).
+- Exclusivement en français, vouvoiement (« vous », « votre »), sans notation brute isolée (décris les coups avec le nom de la pièce en français et sa case).
+- N'affirme jamais une pièce en prise, un clouage, une fourchette ou un mat absents du dossier JSON.
+
+Dossier complet d'analyse (JSON) :
+\`\`\`json
+${JSON.stringify(context, null, 2)}
+\`\`\`
+
+Réponds uniquement par l'objet JSON : {"summary":"...","sections":[{"title":"...","content":"..."}],"variants":[...]}`;
   }
 
   /**
@@ -535,31 +677,35 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     return captions;
   }
 
-  /** Parse la réponse du modèle en tolérant les fences Markdown éventuelles. */
-  public static parseCard(raw: string): Omit<CoachCard, 'level'> | null {
+  /** Extrait un objet JSON nettoyé depuis une réponse modèle (tolère fences). */
+  private static extractJsonObject(raw: string): Record<string, unknown> | null {
     if (!raw) return null;
-
     const cleaned = raw
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/, '')
       .trim();
 
-    // Certains modèles préfixent par du texte : on isole le premier objet JSON.
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
     if (start === -1 || end === -1 || end <= start) return null;
 
-    let data: unknown;
     try {
-      data = JSON.parse(cleaned.slice(start, end + 1));
+      const data: unknown = JSON.parse(cleaned.slice(start, end + 1));
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+      return data as Record<string, unknown>;
     } catch {
       return null;
     }
+  }
 
-    if (!data || typeof data !== 'object') return null;
-    const obj = data as Record<string, unknown>;
+  /** Parse la réponse initiale (supporte le format 3 blocs et l'ancien format insights). */
+  public static parseCard(raw: string): Omit<CoachCard, 'level'> | null {
+    const obj = this.extractJsonObject(raw);
+    if (!obj) return null;
 
     const headline = typeof obj.headline === 'string' ? obj.headline.trim() : '';
+    const idea = typeof obj.idea === 'string' ? obj.idea.trim() : '';
+    const objective = typeof obj.objective === 'string' ? obj.objective.trim() : '';
     const takeaway = typeof obj.takeaway === 'string' ? obj.takeaway.trim() : '';
     const rawInsights = Array.isArray(obj.insights) ? obj.insights : [];
 
@@ -574,9 +720,54 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
       insights.push({ kind: kind as Insight['kind'], text });
     }
 
-    if (headline.length === 0 && insights.length === 0 && takeaway.length === 0) return null;
+    if (insights.length === 0) {
+      if (idea) insights.push({ kind: 'played_move', text: idea });
+      if (objective) insights.push({ kind: 'good_decision', text: objective });
+    }
 
-    return { headline, insights, takeaway };
+    if (headline.length === 0 && insights.length === 0 && !idea && !objective && takeaway.length === 0) {
+      return null;
+    }
+
+    return {
+      headline,
+      idea: idea || insights[0]?.text || undefined,
+      objective: objective || insights[1]?.text || undefined,
+      insights,
+      takeaway,
+    };
+  }
+
+  /** Parse la réponse JSON d'approfondissement (Niveau 2 : « Approfondir »). */
+  public static parseDeepDive(raw: string): Omit<CoachDeepDive, 'level'> | null {
+    const obj = this.extractJsonObject(raw);
+    if (!obj) return null;
+
+    const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+    const rawSections = Array.isArray(obj.sections) ? obj.sections : [];
+    const sections: CoachDeepDiveSection[] = [];
+    for (const item of rawSections) {
+      if (!item || typeof item !== 'object') continue;
+      const sec = item as Record<string, unknown>;
+      const title = typeof sec.title === 'string' ? sec.title.trim() : '';
+      const content = typeof sec.content === 'string' ? sec.content.trim() : '';
+      if (title.length > 0 && content.length > 0) {
+        sections.push({ title, content });
+      }
+    }
+
+    const rawVariants = Array.isArray(obj.variants) ? obj.variants : [];
+    const variants = rawVariants
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      .map(v => v.trim());
+
+    if (sections.length === 0 && !summary) return null;
+
+    return {
+      summary: summary || undefined,
+      sections,
+      variants: variants.length > 0 ? variants : undefined,
+    };
   }
 
   /**
@@ -598,21 +789,148 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
   ): { isValid: boolean; reason?: string } {
     const fullText = [
       card.headline,
+      card.idea ?? '',
+      card.objective ?? '',
       card.takeaway,
       ...card.insights.map((i) => i.text),
     ].join(' ');
+
+    return this.verifyTextFactualConsistency(fullText, facts, context);
+  }
+
+  /**
+   * Valide une réponse d'approfondissement (Niveau 2) avec les mêmes 8 contrôles
+   * factuels ET la vérification sur l'échiquier des variantes éventuellement citées.
+   */
+  public static verifyDeepDiveFactualConsistency(
+    deepDive: Omit<CoachDeepDive, 'level'> | CoachDeepDive,
+    facts: VerifiedTacticalFacts | undefined,
+    context: ExplanationContext
+  ): { isValid: boolean; reason?: string } {
+    if (!deepDive.sections || deepDive.sections.length === 0) {
+      return { isValid: false, reason: 'Approfondissement vide (aucune section structurée).' };
+    }
+
+    const fullText = [
+      deepDive.summary ?? '',
+      ...deepDive.sections.flatMap(s => [s.title, s.content]),
+      ...(deepDive.variants ?? []),
+    ].join(' ');
+
+    const textCheck = this.verifyTextFactualConsistency(fullText, facts, context, { isDeepDive: true });
+    if (!textCheck.isValid) return textCheck;
+
+    if (deepDive.variants && deepDive.variants.length > 0) {
+      const variantCheck = this.validateVariantsOnBoard(deepDive.variants, context);
+      if (!variantCheck.isValid) return variantCheck;
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Vérifie que toute séquence de coups (SAN/UCI) citée dans `variants` est légale
+   * sur l'échiquier à partir de `fen_before` / `fen_after` et appartient aux variantes calculées.
+   */
+  private static validateVariantsOnBoard(
+    variants: string[],
+    context: ExplanationContext
+  ): { isValid: boolean; reason?: string } {
+    const knownTokens = new Set<string>();
+    const pushSan = (s?: string | null) => {
+      if (s) knownTokens.add(s.replace(/[+#!?]+/g, '').toLowerCase());
+    };
+    pushSan(context.played.san);
+    pushSan(context.best?.san);
+    for (const m of context.best?.pv_san ?? []) pushSan(m);
+    for (const m of context.tactical_facts?.refutation_pv_san ?? []) pushSan(m);
+
+    const sanTokenRegex = /\b(?:O-O-O|O-O|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?|[a-h]x[a-h][1-8](?:=[QRBN])?)\b/g;
+
+    for (const line of variants) {
+      const tokens = line.match(sanTokenRegex);
+      if (!tokens || tokens.length === 0) continue;
+
+      let simPos: Chess | null = null;
+      let startChecked = false;
+      try {
+        const beforePos = Chess.fromSetup(parseFen(context.fen_before).unwrap()).unwrap();
+        const afterFen = context.tactical_facts?.fen_after;
+        const afterPos = afterFen ? Chess.fromSetup(parseFen(afterFen).unwrap()).unwrap() : null;
+        const firstMoveBefore = parseSan(beforePos, tokens[0]);
+        if (firstMoveBefore && beforePos.isLegal(firstMoveBefore)) {
+          simPos = beforePos;
+          startChecked = true;
+        } else if (afterPos) {
+          const firstMoveAfter = parseSan(afterPos, tokens[0]);
+          if (firstMoveAfter && afterPos.isLegal(firstMoveAfter)) {
+            simPos = afterPos;
+            startChecked = true;
+          }
+        }
+      } catch {
+        simPos = null;
+      }
+
+      if (!startChecked || !simPos) {
+        return {
+          isValid: false,
+          reason: `Variante illégale ou hors position détectée dans l'approfondissement (« ${tokens[0]} »).`,
+        };
+      }
+
+      for (const tok of tokens) {
+        const cleanTok = tok.replace(/[+#!?]+/g, '').toLowerCase();
+        if (knownTokens.size > 0 && !knownTokens.has(cleanTok)) {
+          return {
+            isValid: false,
+            reason: `Coup de variante non calculé (« ${tok} » absent des variantes Stockfish vérifiées).`,
+          };
+        }
+        const parsedMove = parseSan(simPos, tok);
+        if (!parsedMove || !simPos.isLegal(parsedMove)) {
+          return {
+            isValid: false,
+            reason: `Variante illégale sur l'échiquier au coup « ${tok} ».`,
+          };
+        }
+        simPos.play(parsedMove);
+      }
+    }
+
+    return { isValid: true };
+  }
+
+  private static verifyTextFactualConsistency(
+    fullText: string,
+    facts: VerifiedTacticalFacts | undefined,
+    context: ExplanationContext,
+    options: { isDeepDive?: boolean } = {}
+  ): { isValid: boolean; reason?: string } {
+    const isDeepDive = options.isDeepDive === true;
 
     // Normalisation Unicode sans accents pour des détections fiables
     const norm = fullText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
     // 1. Contrôle des affirmations de pièce en prise / indéfendue / non protégée
-    // (on exclut les conseils préventifs généraux du type « éviter de laisser ... sans défense »)
-    const normForHanging = norm.replace(
-      /\b(?:pour\s+)?(?:eviter|evitez|ne pas|jamais)\s+(?:de\s+)?(?:laisser|exposer|mettre)[^.!?]{0,60}/gi,
-      ''
-    );
-    const claimsHanging =
-      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (?:une|votre|la) piece)\b/i.test(normForHanging);
+    // (on exclut les conseils préventifs généraux et les négations explicites)
+    const normForHanging = norm
+      .replace(
+        /\b(?:pour\s+)?(?:eviter|evitez|ne pas|jamais)\s+(?:de\s+)?(?:laisser|exposer|mettre)[^.!?]{0,60}/gi,
+        ''
+      )
+      .replace(
+        /\bsans\s+(?:laisser|mettre|rendre|exposer|qu['’](?:un|une|le|la|votre)[^.!?]{0,25}(?:soit|reste))\s+[^.!?]{0,40}(?:en prise|sans defense|non protegee?s?|indefendue?s?)/gi,
+        ''
+      )
+      .replace(
+        /\b(?:n['’](?:est|etait|y a|ont|avez)|ne\s+(?:laisse|laissez|met|mettez|reste|sont)|ni|pas|aucun(?:e)?)\s+(?:pas\s+|plus\s+)?(?:\w+\s+){0,2}?(?:de\s+|d['’])?(?:(?:piece|pion|cavalier|fou|tour|dame|roi)\s+)?(?:en\s+)?(?:[a-h][1-8]\s+)?(?:n['’]est\s+)?(?:\w+\s+){0,1}?(?:en prise|non protegee?s?|indefendue?s?|sans defense)\b/gi,
+        ''
+      );
+    const hangingPattern = isDeepDive
+      ? /\b(en prise|non protegee?s?|indefendue?s?|sans defense|laisse (?:une|votre|la) piece)\b/i
+      : /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (?:une|votre|la) piece)\b/i;
+    const claimsHanging = hangingPattern.test(normForHanging);
 
     if (claimsHanging) {
       const hasHangingFact =
@@ -647,8 +965,17 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     }
 
     // 3. Contrôle des affirmations de mat (échec et mat / mat inévitable)
+    const normForMate = norm
+      .replace(
+        /\b(?:sans|aucun(?:e)?|pas\s+de|eviter\s+(?:une?|le|la)?)\s+(?:de\s+)?(?:menace\s+de\s+mat|echec\s+et\s+mat|mat\s+(?:imminent|immediat|force|inevitable|imparable))\b/gi,
+        ''
+      )
+      .replace(
+        /\b(?:n['’](?:est|y a)|ne\s+(?:donne|livre|fait|cree|menace))\s+(?:pas|plus|aucun(?:e)?)\s+(?:d['’]|de\s+)?(?:echec\s+et\s+mat|mat|menace\s+de\s+mat)\b/gi,
+        ''
+      );
     const claimsMate =
-      /\b(echec et mat|fait mat|livre mat|est mat\b|vous matez|mat inevitable|mat imparable|va vous mater|se faire mater|menace de mat)\b/i.test(norm);
+      /\b(echec et mat|fait mat|livre mat|est mat\b|vous matez|mat inevitable|mat imparable|va vous mater|se faire mater|menace de mat)\b/i.test(normForMate);
 
     if (claimsMate) {
       const hasMateFact =
@@ -832,6 +1159,25 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     }
 
     // 7. Contrôle d'existence et de statut des pièces et cases citées
+    const pvFens: string[] = [];
+    const pvTargetSquares = new Set<string>();
+    const collectPvFens = (startFen: string | undefined, moves: string[] | undefined) => {
+      if (!startFen || !moves || moves.length === 0) return;
+      try {
+        const pos = Chess.fromSetup(parseFen(startFen).unwrap()).unwrap();
+        for (const san of moves.slice(0, 6)) {
+          const mv = parseSan(pos, san);
+          if (!mv || !pos.isLegal(mv)) break;
+          if ('to' in mv) pvTargetSquares.add(makeSquare(mv.to));
+          if ('from' in mv) pvTargetSquares.add(makeSquare(mv.from));
+          pos.play(mv);
+          pvFens.push(makeFen(pos.toSetup()));
+        }
+      } catch {}
+    };
+    collectPvFens(context.fen_before, context.best?.pv_san);
+    collectPvFens(fenAfter, context.tactical_facts?.refutation_pv_san);
+
     const pieceSquareRegex = /\b(tour|cavalier|fou|dame|roi|pion)\s+(?:en\s+)?([a-h][1-8])\b/gi;
     let match: RegExpExecArray | null;
 
@@ -855,8 +1201,13 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         const existsAfterBest = fenAfterBest
           ? checkPieceExistsOnSquare(fenAfterBest, expectedRole, squareStr)
           : false;
+        const existsInPv = pvFens.some(f => checkPieceExistsOnSquare(f, expectedRole, squareStr));
+        const beforeSlice = norm.slice(Math.max(0, match.index - 55), match.index);
+        const isFutureMoveDestination =
+          /\b(?:jouer|jouez|pousser|poussez|avancer|avancez|placer|placez|poster|postez|developper|developpez|amener|amenez|envoyer|envoyez|installer|installez|replier|repliez|mettre|mettez|porter|portez|aller|venir|reculer|reculez|revenir|revenez)\s+(?:ensuite\s+|egalement\s+|plutot\s+|avec\s+)?(?:un|une|le|la|votre|vos|son|leur|ce|cette|l['’]autre|autre)?\s*(?:autre\s+)?$/i.test(beforeSlice) ||
+          (isDeepDive && /\b(?:sortie|developpement|placement|idee|option)\s+(?:d['’]un|d['’]une|du|de la)\s+$/i.test(beforeSlice));
 
-        if (!existsBefore && !existsAfter && !existsAfterBest) {
+        if (!existsBefore && !existsAfter && !existsAfterBest && !existsInPv && !isFutureMoveDestination) {
           return {
             isValid: false,
             reason: `Affirmation hallucinatoire : aucun(e) ${pieceNameFr} sur la case ${squareStr} sur l'échiquier.`,
@@ -882,6 +1233,8 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
             playedFrom === squareStr ||
             bestTo === squareStr ||
             bestFrom === squareStr ||
+            pvTargetSquares.has(squareStr) ||
+            existsInPv ||
             existsAfterBest;
 
           if (!isSquareInFacts && !context.played.captured) {
@@ -921,16 +1274,23 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     }
 
     // 8. Contrôle de cohérence de couleur du camp qui a joué
+    // En Niveau 2 (Approfondissement), le coach décrit aussi les réponses adverses (« les Noirs jouent... »).
     const playedColor = context.played.color;
     if (playedColor === 'white') {
-      if (/\b(les noirs jouent|coup des noirs|les noirs ont joue)\b/i.test(norm)) {
+      const wrongAttr = isDeepDive
+        ? /\b(coup des noirs|les noirs ont joue)\b/i
+        : /\b(les noirs jouent|coup des noirs|les noirs ont joue)\b/i;
+      if (wrongAttr.test(norm)) {
         return {
           isValid: false,
           reason: 'Incohérence sur la couleur : mention des Noirs pour un coup joué par les Blancs.',
         };
       }
     } else {
-      if (/\b(les blancs jouent|coup des blancs|les blancs ont joue)\b/i.test(norm)) {
+      const wrongAttr = isDeepDive
+        ? /\b(coup des blancs|les blancs ont joue)\b/i
+        : /\b(les blancs jouent|coup des blancs|les blancs ont joue)\b/i;
+      if (wrongAttr.test(norm)) {
         return {
           isValid: false,
           reason: 'Incohérence sur la couleur : mention des Blancs pour un coup joué par les Noirs.',
@@ -971,13 +1331,15 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     const isError =
       classification === 'inaccuracy' || classification === 'mistake' || classification === 'blunder';
 
-    const insights: Insight[] = [];
-
     // ---- 1. Mat livré (le joueur vient de mater) ---------------------------
     if (played.is_mate) {
+      const idea = playedText.replace(' Le roi est en échec.', '');
+      const objective = 'La partie est terminée par échec et mat.';
       return applyMoodLimits({
         headline: 'Échec et mat !',
-        insights: [{ kind: 'played_move', text: playedText.replace(' Le roi est en échec.', '') }],
+        idea,
+        objective,
+        insights: [{ kind: 'played_move', text: idea }],
         takeaway: 'Bravo, la partie est gagnée.',
         level,
       }, context);
@@ -985,10 +1347,13 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
 
     // ---- 2. Séquences de mat ------------------------------------------------
     if (moveCtx.mate_sequence === 'created') {
+      const idea = 'Votre roi va se faire mater.';
       return applyMoodLimits({
         headline: 'Attention : le mat menace',
+        idea,
+        objective: bestAction,
         insights: [
-          { kind: 'mistake', text: 'Votre roi va se faire mater.' },
+          { kind: 'mistake', text: idea },
           { kind: 'missed_move', text: bestAction },
         ],
         takeaway: 'Protégez votre roi avant de penser aux pièces.',
@@ -997,10 +1362,13 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     }
 
     if (moveCtx.mate_sequence === 'lost') {
+      const idea = 'Ce coup laisse filer une victoire déjà prête.';
       return applyMoodLimits({
         headline: 'Vous aviez un mat',
+        idea,
+        objective: bestAction,
         insights: [
-          { kind: 'mistake', text: 'Ce coup laisse filer une victoire déjà prête.' },
+          { kind: 'mistake', text: idea },
           { kind: 'missed_move', text: bestAction },
         ],
         takeaway: 'Avant de jouer, vérifiez si vous pouvez mater tout de suite.',
@@ -1011,6 +1379,8 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     if (moveCtx.mate_sequence === 'delayed') {
       return applyMoodLimits({
         headline: 'Le mat est encore là',
+        idea: playedText,
+        objective: 'Maintenez la pression sur le roi adverse pour conclure.',
         insights: [{ kind: 'played_move', text: playedText }],
         takeaway: 'Tout va bien : le mat reste forcé, il arrive juste un peu plus tard.',
         level,
@@ -1019,27 +1389,163 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
 
     // ---- 3. Erreurs : problème prouvé, puis action -------------------------
     if (isError) {
-      insights.push({ kind: 'mistake', text: describeProblem(context) });
-      insights.push({ kind: 'missed_move', text: bestAction });
-
+      const problem = describeProblem(context);
       return applyMoodLimits({
         headline: headlineFor(classification),
-        insights,
+        idea: problem,
+        objective: bestAction,
+        insights: [
+          { kind: 'mistake', text: problem },
+          { kind: 'missed_move', text: bestAction },
+        ],
         takeaway: takeawayFor(classification),
         level,
       }, context);
     }
 
-    // ---- 4. Coups bons : valoriser ce qui est vérifiable -------------------
-    insights.push({ kind: 'played_move', text: playedText });
-    insights.push({ kind: 'good_decision', text: describeGood(context) });
-
+    // ---- 4. Coups bons / théoriques : idée et objectif positionnel --------
+    const good = describeGood(context);
     return applyMoodLimits({
       headline: headlineFor(classification),
-      insights,
+      idea: playedText,
+      objective: good,
+      insights: [
+        { kind: 'played_move', text: playedText },
+        { kind: 'good_decision', text: good },
+      ],
       takeaway: takeawayFor(classification),
       level,
     }, context);
+  }
+
+  /**
+   * Repli déterministe pour le Niveau 2 (« Approfondir ») : produit une analyse
+   * causale structurée à partir des faits géométriques, du score Stockfish et
+   * des variantes narrées en français clair sur l'échiquier.
+   */
+  public static fallbackDeepDive(
+    context: ExplanationContext,
+    initialCard: CoachCard,
+    level: PlayerLevel
+  ): CoachDeepDive {
+    const { played, best, evaluation, tactical_facts: facts, opening, verdict } = context;
+    const guidance = resolveMoveGuidance(context);
+    const sections: CoachDeepDiveSection[] = [];
+
+    // 1. Logique et conséquences concrètes sur l'évaluation et la structure
+    const logicParts: string[] = [];
+    if (evaluation.before !== null && evaluation.after !== null) {
+      const beforePawns = (evaluation.before / 100).toFixed(1);
+      const afterPawns = (evaluation.after / 100).toFixed(1);
+      if (evaluation.player_loss_cp !== null && evaluation.player_loss_cp >= 50) {
+        logicParts.push(
+          `Ce coup fait évoluer l'évaluation de ${beforePawns} à ${afterPawns} pions, ce qui dégrade votre marge.`
+        );
+      } else {
+        logicParts.push(
+          `L'évaluation reste maîtrisée autour de ${afterPawns} pions après ce coup.`
+        );
+      }
+    }
+
+    if (opening?.is_theory_move && opening.name) {
+      const freqPct = opening.frequency_percent !== null ? ` (${opening.frequency_percent} % des parties de maîtres)` : '';
+      logicParts.push(
+        `Dans l'ouverture « ${opening.name} »${freqPct}, ce coup suit les plans classiques de développement et de contrôle central.`
+      );
+    }
+
+    if (facts) {
+      const pos = facts.positional_changes;
+      if (pos.doubled_pawns_created.length > 0) {
+        logicParts.push('Votre structure crée des pions doublés, plus difficiles à défendre à long terme.');
+      }
+      if (pos.passed_pawns_created.length > 0) {
+        logicParts.push('Vous obtenez un pion passé qui crée une pression durable.');
+      }
+      if (pos.open_files_near_king.length > 0) {
+        logicParts.push('Une colonne s’ouvre près du roi, demandant une attention particulière à sa sécurité.');
+      }
+    }
+
+    if (logicParts.length === 0) {
+      logicParts.push(
+        `Analyse (${guidance.label.toLowerCase()}) : ${guidance.deepDiveFocus.toLowerCase()}.`
+      );
+    }
+    sections.push({ title: 'Logique et conséquences', content: logicParts.join(' ') });
+
+    // 2. Menaces, tactiques et ressources adverses
+    const threatParts: string[] = [];
+    const definiteFr = (p: string): string => (p === 'dame' || p === 'tour' ? `la ${p}` : `le ${p}`);
+    if (facts) {
+      if (facts.newly_undefended_own_pieces.length > 0) {
+        const own = facts.newly_undefended_own_pieces[0];
+        threatParts.push(
+          `Votre ${own.piece} en ${own.square} devient vulnérable et risque d'être sous attaque adverse.`
+        );
+      }
+      if (facts.newly_undefended_enemy_pieces.length > 0) {
+        const enemy = facts.newly_undefended_enemy_pieces[0];
+        threatParts.push(
+          `Vous mettez la pression sur ${definiteFr(enemy.piece)} adverse en ${enemy.square}.`
+        );
+      }
+      if (facts.new_pins_against_player.length > 0) {
+        const pin = facts.new_pins_against_player[0];
+        threatParts.push(
+          `Attention au clouage sur votre ${pin.pinned_piece} en ${pin.pinned_square}.`
+        );
+      }
+      if (facts.new_pins_by_player.length > 0) {
+        const pin = facts.new_pins_by_player[0];
+        threatParts.push(
+          `Votre coup cloue ${definiteFr(pin.pinned_piece)} adverse en ${pin.pinned_square}, limitant ses mouvements.`
+        );
+      }
+    }
+
+    if (threatParts.length === 0) {
+      threatParts.push(
+        verdict.classification === 'blunder' || verdict.classification === 'mistake'
+          ? "L'adversaire peut exploiter l'initiative obtenue pour prendre le contrôle des cases clés."
+          : "Aucune faiblesse tactique immédiate n'apparaît dans votre camp après ce coup."
+      );
+    }
+    sections.push({ title: 'Menaces et ressources adverses', content: threatParts.join(' ') });
+
+    // 3. Alternatives et suite calculée
+    const bestDesc = best?.uci ? describeMove(context.fen_before, best.uci) : null;
+    if (bestDesc && best?.uci !== played.uci) {
+      sections.push({
+        title: 'Meilleure alternative',
+        content: `L'option la plus précise était : ${lowerFirst(bestDesc.text)} Elle évitait les concessions créées par le coup joué.`,
+      });
+    }
+
+    // Variantes vérifiées narrées en français clair depuis l'échiquier
+    const variants: string[] = [];
+    if (best?.pv_san && best.pv_san.length > 0) {
+      const narrated = narrateSanSequence(context.fen_before, best.pv_san.slice(0, 4));
+      if (narrated) variants.push(`Suite recommandée : ${narrated}`);
+    }
+    if (facts && facts.refutation_pv_san.length > 0 && facts.fen_after) {
+      const narratedRef = narrateSanSequence(facts.fen_after, facts.refutation_pv_san.slice(0, 4));
+      if (narratedRef) variants.push(`Réponse adverse typique : ${narratedRef}`);
+    }
+
+    const summary =
+      initialCard.headline && level === 'avance'
+        ? `${guidance.deepDiveFocus} sur cette position.`
+        : `${guidance.label} : approfondissement des conséquences concrètes sur l'échiquier.`;
+
+    return {
+      summary,
+      sections,
+      variants: variants.length > 0 ? variants : undefined,
+      level,
+      source: 'fallback',
+    };
   }
 }
 
@@ -1328,27 +1834,200 @@ export function sanitizeCaption(text: string, maxChars = 110): string | null {
   return out.length >= 3 ? out : null;
 }
 
+interface MoveGuidance {
+  label: string;
+  initialFocus: string;
+  deepDiveFocus: string;
+  tacticalNote?: string;
+}
+
+/** Table d'adaptation pédagogique (Spécification v1.1 — Section 4). */
+function resolveMoveGuidance(context: ExplanationContext): MoveGuidance {
+  const { classification } = context.verdict;
+  const facts = context.tactical_facts;
+  const isDefense =
+    classification === 'best' &&
+    context.evaluation.mate_before !== null &&
+    context.evaluation.mate_before < 0;
+
+  const hasTactic = Boolean(
+    context.played.captured ||
+    context.played.is_check ||
+    context.played.is_mate ||
+    (facts &&
+      (facts.newly_undefended_own_pieces.length > 0 ||
+        facts.newly_undefended_enemy_pieces.length > 0 ||
+        facts.new_pins_against_player.length > 0 ||
+        facts.new_pins_by_player.length > 0))
+  );
+
+  const tacticalNote = hasTactic
+    ? 'Combinaison / motif tactique présent (détail et conséquences à expliquer)'
+    : undefined;
+
+  if (isDefense) {
+    return {
+      label: 'Coup défensif',
+      initialFocus: 'Menace neutralisée',
+      deepDiveFocus: 'Analyse des ressources défensives',
+      tacticalNote,
+    };
+  }
+
+  switch (classification) {
+    case 'brilliant':
+    case 'great':
+      return {
+        label: 'Excellent coup',
+        initialFocus: 'Idée remarquable',
+        deepDiveFocus: 'Analyse de la combinaison et de ses conséquences',
+        tacticalNote,
+      };
+    case 'book':
+      return {
+        label: 'Coup théorique',
+        initialFocus: "Idée de l'ouverture",
+        deepDiveFocus: 'Logique de la variante et plans associés',
+        tacticalNote,
+      };
+    case 'inaccuracy':
+      return {
+        label: 'Imprécision',
+        initialFocus: 'Ce qui pouvait être mieux joué',
+        deepDiveFocus: 'Analyse de la meilleure alternative',
+        tacticalNote,
+      };
+    case 'mistake':
+      return {
+        label: 'Erreur',
+        initialFocus: 'Problème principal',
+        deepDiveFocus: 'Explication de la dégradation positionnelle',
+        tacticalNote,
+      };
+    case 'blunder':
+      return {
+        label: 'Gaffe',
+        initialFocus: 'Danger immédiat',
+        deepDiveFocus: 'Tactique manquée et meilleure défense',
+        tacticalNote,
+      };
+    default:
+      return {
+        label: hasTactic ? 'Coup tactique' : 'Bon coup',
+        initialFocus: hasTactic ? 'Combinaison essentielle' : 'Intérêt et objectif',
+        deepDiveFocus: hasTactic
+          ? 'Déroulement détaillé et conséquences'
+          : 'Justification stratégique',
+        tacticalNote,
+      };
+  }
+}
+
+/** Décrit en français clair une courte séquence SAN vérifiée sur l'échiquier. */
+function narrateSanSequence(startFen: string, pvSan: string[]): string {
+  if (!pvSan || pvSan.length === 0) return '';
+  try {
+    const pos = Chess.fromSetup(parseFen(startFen).unwrap()).unwrap();
+    const parts: string[] = [];
+    for (const san of pvSan) {
+      const m = parseSan(pos, san);
+      if (!m || !pos.isLegal(m) || !('from' in m)) break;
+      const uci = `${makeSquare(m.from)}${makeSquare(m.to)}${m.promotion ? m.promotion[0] : ''}`;
+      const fenNow = makeFen(pos.toSetup());
+      const desc = describeMove(fenNow, uci);
+      if (desc) {
+        parts.push(desc.text.replace(/\.$/, ''));
+      }
+      pos.play(m);
+    }
+    return parts.length > 0 ? `${parts.join(', puis ')}.` : '';
+  } catch {
+    return '';
+  }
+}
+
 /** Tronque proprement à N mots (ajoute « … » si coupé). */
 function truncateWords(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/);
-  if (words.length <= maxWords) return text.trim();
+  const trimmed = text.trim();
+  if (!trimmed || maxWords <= 0) return '';
+  const words = trimmed.split(/\s+/);
+  if (words.length <= maxWords) return trimmed;
   return `${words.slice(0, maxWords).join(' ')}…`;
 }
 
 /**
- * Applique les bornes du registre émotionnel à une carte, quelle que soit son
- * origine (modèle ou repli local). C'est la garantie « ne dépasse pas la
- * longueur fournie » : le prompt la demande, le code l'impose.
+ * Répartit un plafond global de mots (65) sur les 3 blocs initiaux sans jamais
+ * dépasser la limite totale.
+ */
+function enforceThreeBlockBudget(
+  blocks: [string, string, string],
+  maxTotalWords: number
+): [string, string, string] {
+  const counts = blocks.map(countWords);
+  const total = counts[0] + counts[1] + counts[2];
+  if (total <= maxTotalWords) return blocks;
+
+  const budgets = [...counts];
+  let excess = total - maxTotalWords;
+  while (excess > 0) {
+    // Réduit d'abord le bloc actuellement le plus long (> 1 mot)
+    let longestIdx = -1;
+    let longestLen = 1;
+    for (let i = 0; i < 3; i++) {
+      if (budgets[i] > longestLen) {
+        longestLen = budgets[i];
+        longestIdx = i;
+      }
+    }
+    if (longestIdx === -1) break;
+    budgets[longestIdx]--;
+    excess--;
+  }
+
+  return [
+    truncateWords(blocks[0], budgets[0]),
+    truncateWords(blocks[1], budgets[1]),
+    truncateWords(blocks[2], budgets[2]),
+  ];
+}
+
+/**
+ * Applique les bornes du registre et la limite stricte de 65 mots réunis
+ * aux trois blocs de la réponse initiale (`idea`, `objective`, `takeaway`).
  */
 function applyMoodLimits(card: CoachCard, context: ExplanationContext): CoachCard {
   const max = moodFor(context);
+  const rawIdea = card.idea ?? card.insights[0]?.text ?? '';
+  const rawObjective = card.objective ?? card.insights[1]?.text ?? '';
+  const rawTakeaway = card.takeaway ?? '';
+
+  const [idea, objective, takeaway] = enforceThreeBlockBudget(
+    [rawIdea, rawObjective, rawTakeaway],
+    INITIAL_CARD_MAX_WORDS
+  );
+
+  const syncedInsights: Insight[] = [];
+  if (card.insights.length > 0) {
+    if (idea) {
+      syncedInsights.push({ ...card.insights[0], text: idea });
+    }
+    if (objective && card.insights.length > 1) {
+      syncedInsights.push({ ...card.insights[1], text: objective });
+    } else if (objective && card.insights.length === 1 && card.objective) {
+      syncedInsights.push({ kind: 'good_decision', text: objective });
+    }
+  } else {
+    if (idea) syncedInsights.push({ kind: 'played_move', text: idea });
+    if (objective) syncedInsights.push({ kind: 'good_decision', text: objective });
+  }
+
   return {
     ...card,
     headline: truncateWords(card.headline, max.maxHeadlineWords),
-    insights: card.insights
-      .slice(0, max.maxInsights)
-      .map(i => ({ ...i, text: truncateWords(i.text, max.maxWordsPerInsight) })),
-    takeaway: truncateWords(card.takeaway, max.maxTakeawayWords),
+    idea: idea || undefined,
+    objective: objective || undefined,
+    insights: syncedInsights.slice(0, 2),
+    takeaway,
   };
 }
 

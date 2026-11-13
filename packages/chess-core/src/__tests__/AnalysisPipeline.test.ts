@@ -556,5 +556,47 @@ describe('AnalysisPipeline', () => {
       expect(afterSwitch[0].coachCard?.source).toBe('llm');
       expect(afterSwitch[0].coachCard).not.toBe(beforeSwitch[0].coachCard);
     });
+
+    it('requestDeepDive met en cache sur coachCard.deepDive sans régénération inutile pour le même coup/niveau', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+      vi.spyOn(ExplanationEngine, 'generateCard').mockResolvedValue({
+        headline: 'Centre conquis',
+        idea: 'Le pion occupe le centre.',
+        objective: 'Développez ensuite vos pièces.',
+        insights: [{ kind: 'played_move', text: 'Le pion occupe le centre.' }],
+        takeaway: 'Contrôlez le centre.',
+        level: 'intermediaire',
+        source: 'llm',
+      });
+      const deepSpy = vi.spyOn(ExplanationEngine, 'generateDeepDive').mockResolvedValue({
+        summary: 'Explication causale complémentaire.',
+        sections: [{ title: 'Logique', content: 'Libère le fou et la dame.' }],
+        level: 'intermediaire',
+        source: 'llm',
+      });
+
+      eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: 20, pv: ['e2e4'] }));
+      const move = moveManager.playMove('e2e4');
+      const fenAfter = moveManager.getFen();
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: fenAfter, depth: 30, source: 'cloud', cp: -20, pv: ['e7e5'] }),
+      ]);
+
+      eventBus.emit('MovePlayed', {
+        fenBefore: START,
+        fenAfter,
+        move: 'e2e4',
+        nodeId: move.nodeId!,
+      });
+      await new Promise((r) => setTimeout(r, 25));
+
+      const first = await pipeline.requestDeepDive(move.nodeId!);
+      const second = await pipeline.requestDeepDive(move.nodeId!);
+
+      expect(deepSpy).toHaveBeenCalledTimes(1);
+      expect(first?.summary).toBe('Explication causale complémentaire.');
+      expect(second).toEqual(first);
+      expect(pipeline.getMoveRecords()[0].coachCard?.deepDive?.sections).toHaveLength(1);
+    });
   });
 });

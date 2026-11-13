@@ -10,7 +10,7 @@ import { TheoryDetector } from '../explorer/TheoryDetector';
 import type { OpeningData } from '../explorer/ExplorerCache';
 import { MoveRecord, MoveNode, MoveTheory } from '../pedagogy/types';
 import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
-import type { CoachCard, PlayerLevel } from '../pedagogy/ExplanationContext';
+import type { CoachCard, CoachDeepDive, PlayerLevel } from '../pedagogy/ExplanationContext';
 import { CloudEvalService } from './CloudEvalService';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -54,6 +54,7 @@ export class AnalysisPipeline {
   private activeNodeId: string | null = null;
   private llmInFlightKeys = new Set<string>();
   private llmCompletedKeys = new Set<string>();
+  private deepDiveInFlight = new Map<string, Promise<CoachDeepDive | null>>();
 
   /**
    * Remplace de façon IMMUABLE la `coachCard` d'un enregistrement déjà stocké :
@@ -107,7 +108,11 @@ export class AnalysisPipeline {
         if (normalizedCard.source === 'llm') {
           this.llmCompletedKeys.add(key);
         }
-        const updated = this.updateRecordCoachCard(record.nodeId, normalizedCard);
+        const updated = this.updateRecordCoachCard(record.nodeId, {
+          ...normalizedCard,
+          deepDive:
+            latest.coachCard?.deepDive?.level === level ? latest.coachCard.deepDive : undefined,
+        });
         if (updated) {
           this.eventBus.emit('PedagogyUpdated', updated);
         }
@@ -116,6 +121,49 @@ export class AnalysisPipeline {
         this.llmInFlightKeys.delete(key);
         console.error('[AnalysisPipeline] Coach card failed:', error);
       });
+  }
+
+  /**
+   * Niveau 2 (« Approfondir ») : génère à la demande une analyse complémentaire
+   * pour `nodeId` et la met en cache sur `coachCard.deepDive` pour éviter
+   * toute régénération inutile pour la même position et le même niveau.
+   */
+  public async requestDeepDive(nodeId: string): Promise<CoachDeepDive | null> {
+    const rec = this.recordsByNodeId.get(nodeId);
+    if (!rec || !rec.coachCard) return null;
+
+    const level = this.playerLevel;
+    if (rec.coachCard.deepDive && rec.coachCard.deepDive.level === level) {
+      return rec.coachCard.deepDive;
+    }
+
+    const key = `${nodeId}:${level}`;
+    const existing = this.deepDiveInFlight.get(key);
+    if (existing) return existing;
+
+    const prevClass = this.getPreviousClassification(nodeId);
+    const task = ExplanationEngine.generateDeepDive(rec, rec.coachCard, level, prevClass)
+      .then((deepDive) => {
+        this.deepDiveInFlight.delete(key);
+        const latest = this.recordsByNodeId.get(nodeId);
+        if (!latest || !latest.coachCard || this.playerLevel !== level) return null;
+        const updated = this.updateRecordCoachCard(nodeId, {
+          ...latest.coachCard,
+          deepDive,
+        });
+        if (updated) {
+          this.eventBus.emit('PedagogyUpdated', updated);
+        }
+        return deepDive;
+      })
+      .catch((error) => {
+        this.deepDiveInFlight.delete(key);
+        console.error('[AnalysisPipeline] Deep dive failed:', error);
+        return null;
+      });
+
+    this.deepDiveInFlight.set(key, task);
+    return task;
   }
 
   public setPlayerLevel(level: PlayerLevel): void {
@@ -1042,6 +1090,7 @@ export class AnalysisPipeline {
     this.multiPvsByFen.clear();
     this.llmInFlightKeys.clear();
     this.llmCompletedKeys.clear();
+    this.deepDiveInFlight.clear();
     this.activeNodeId = null;
     this.resetPending();
   }

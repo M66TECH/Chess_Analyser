@@ -19,14 +19,40 @@ export interface Insight {
   text: string;
 }
 
+/** Section structurée de l'analyse approfondie (Niveau 2). */
+export interface CoachDeepDiveSection {
+  title: string;
+  content: string;
+}
+
+/** Analyse pédagogique complémentaire produite à la demande (Niveau 2 : « Approfondir »). */
+export interface CoachDeepDive {
+  /** Synthèse causale complémentaire (sans répéter la fiche initiale). */
+  summary?: string;
+  /** Sections structurées adaptées au coup et au niveau du joueur. */
+  sections: CoachDeepDiveSection[];
+  /** Variantes clés vérifiées sur l'échiquier, exprimées clairement. */
+  variants?: string[];
+  level: PlayerLevel;
+  /** `true` quand l'approfondissement vient du moteur déterministe local. */
+  degraded?: boolean;
+  source?: 'llm' | 'fallback';
+}
+
 /**
  * Fiche pédagogique produite par l'IA pour un coup.
- * `headline` sert d'accroche, `insights` le détail par axe.
+ * Niveau 1 (initial) : 3 blocs complémentaires (`idea`, `objective`, `takeaway`)
+ * bornés à 65 mots maximum réunis ; `insights` et `headline` restent maintenus
+ * pour compatibilité ascendante. Niveau 2 : `deepDive` chargé à la demande.
  */
 export interface CoachCard {
   headline: string;
+  /** BLOC 1 — L'IDÉE : pourquoi le coup est intéressant et ce qu'il apporte ici. */
+  idea?: string;
+  /** BLOC 2 — VOTRE OBJECTIF : ce qu'il faut chercher à accomplir ensuite. */
+  objective?: string;
   insights: Insight[];
-  /** Conseil actionnable en une phrase. */
+  /** BLOC 3 — À RETENIR : principe échiquéen simple, utile et réutilisable. */
   takeaway: string;
   /** Niveau de lecture employé, pour transparence. */
   level: PlayerLevel;
@@ -38,6 +64,8 @@ export interface CoachCard {
   degraded?: boolean;
   /** Provenance réelle de la fiche (`local` = attente/import, `llm` = validée IA, `fallback` = repli après échec). */
   source?: 'llm' | 'local' | 'fallback';
+  /** Analyse approfondie (Niveau 2), générée uniquement sur clic « Approfondir ». */
+  deepDive?: CoachDeepDive;
 }
 
 export type PlayerLevel = 'debutant' | 'intermediaire' | 'avance';

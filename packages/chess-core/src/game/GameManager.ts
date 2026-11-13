@@ -135,6 +135,10 @@ export class GameManager {
     return this.pipeline.getPlayerLevel();
   }
 
+  public requestDeepDive(nodeId: string) {
+    return this.pipeline.requestDeepDive(nodeId);
+  }
+
   public resetGame(initialFen?: string) {
     this.pipeline.reset();
     this.moveManager.reset(initialFen);
