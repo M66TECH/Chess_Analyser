@@ -17,9 +17,19 @@ export const PROVIDERS_REGISTRY: ProviderConfig[] = [
     defaultPriority: 1, // Priorité 1 : Ultra-rapide
     timeoutMs: 8_000,
     defaultModels: [
-      { id: 'openai/gpt-oss-120b', profile: 'reasoning', maxTokensFloor: 350 },
-      { id: 'openai/gpt-oss-20b', profile: 'fast' },
-      { id: 'qwen/qwen3.8-27b', profile: 'reasoning', maxTokensFloor: 400 },
+      {
+        id: 'openai/gpt-oss-120b',
+        profile: 'reasoning',
+        maxTokensFloor: 1400,
+        extraBody: { reasoning_effort: 'low' },
+      },
+      {
+        id: 'openai/gpt-oss-20b',
+        profile: 'fast',
+        maxTokensFloor: 1200,
+        extraBody: { reasoning_effort: 'low' },
+      },
+      { id: 'qwen/qwen3.8-27b', profile: 'reasoning', maxTokensFloor: 1400 },
     ],
   },
   {
@@ -29,7 +39,7 @@ export const PROVIDERS_REGISTRY: ProviderConfig[] = [
     envKeyName: 'OPENROUTER_API_KEY',
     envModelsName: 'OPENROUTER_MODELS',
     defaultPriority: 2, // Priorité 2 : Secours rapide et clair
-    timeoutMs: 8_000,
+    timeoutMs: 6_000,
     customHeaders: {
       'HTTP-Referer': 'https://chess-analyzer.local',
       'X-Title': 'Chess Analyzer Coach',

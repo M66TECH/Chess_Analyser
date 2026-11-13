@@ -98,8 +98,9 @@ export class AIGateway {
       const availableModels = await this.filterAvailableModels(provider.id, allModels);
       if (availableModels.length === 0) continue;
 
-      // On teste les modèles avec les clés saines du pool
+      // On teste les modèles avec les clés saines du pool (au plus 1 essai par clé distincte)
       for (const modelConfig of availableModels) {
+        const attemptedKeys = new Set<string>();
         // Boucle sur les clés saines du pool pour ce modèle
         while (networkAttempts < this.maxNetworkAttempts) {
           const remainingForCall = globalDeadline - Date.now();
@@ -124,10 +125,11 @@ export class AIGateway {
 
           // Sélection d'une clé saine via rotation atomique
           const healthyKey = await this.selectHealthyKeyAtomic(provider.id, keys);
-          if (!healthyKey) {
-            // Plus aucune clé saine pour ce fournisseur
+          if (!healthyKey || attemptedKeys.has(healthyKey)) {
+            // Plus aucune nouvelle clé saine pour ce modèle
             break;
           }
+          attemptedKeys.add(healthyKey);
 
           networkAttempts += 1; // 1 appel réseau effectif
           const startTime = Date.now();
@@ -196,10 +198,13 @@ export class AIGateway {
             // Enregistre l'échec dans les métriques
             await this.store.recordMetrics(provider.id, latencyMs, false);
 
-            // Si l'hôte ou le modèle est maintenant indisponible, on sort du while
+            // Si l'hôte/modèle est indisponible, ou en cas de timeout / réponse vide ou tronquée, on passe au modèle suivant
             if (
               (await this.store.isHostInCooldown(provider.id)) ||
-              !(await this.store.isModelAvailable(provider.id, modelConfig.id))
+              !(await this.store.isModelAvailable(provider.id, modelConfig.id)) ||
+              isTimeout ||
+              failureReason.startsWith('Empty response') ||
+              failureReason.startsWith('Truncated JSON')
             ) {
               break;
             }
@@ -268,6 +273,7 @@ export class AIGateway {
         messages: request.messages,
         temperature: request.temperature ?? 0.7,
         max_tokens: finalMaxTokens,
+        ...(modelConfig.extraBody ?? {}),
       }),
       signal: combinedSignal,
     });
@@ -301,6 +307,14 @@ export class AIGateway {
 
     if (!content) {
       throw new Error('Empty response from model');
+    }
+
+    if (
+      choice?.finish_reason === 'length' &&
+      strippedContent.startsWith('{') &&
+      !strippedContent.endsWith('}')
+    ) {
+      throw new Error('Truncated JSON response from model');
     }
 
     return content;

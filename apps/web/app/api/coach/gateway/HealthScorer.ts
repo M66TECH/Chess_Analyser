@@ -20,9 +20,12 @@ export class HealthScorer {
         : 1.0;
     const successPoints = SR * 50;
 
-    // 3. Pénalité de latence L (en millisecondes)
-    const L = metrics.avgLatencyMs > 0 ? metrics.avgLatencyMs : 400;
-    const latencyPenalty = L / 100;
+    // 3. Pénalité de latence L (en millisecondes) :
+    // Un fournisseur non encore mesuré (totalCalls === 0) part avec une estimation neutre (1200 ms)
+    // et la pénalité est plafonnée à 15 pts afin qu'un fournisseur P1 sain (~2000 ms) ne soit pas
+    // rétrogradé derrière un secours P2 non testé tant qu'il réussit ses appels.
+    const L = metrics.totalCalls > 0 && metrics.avgLatencyMs > 0 ? metrics.avgLatencyMs : 1200;
+    const latencyPenalty = Math.min(L / 200, 15);
 
     // 4. Pénalité des erreurs consécutives E (5xx)
     const E = metrics.consecutive5xx || 0;

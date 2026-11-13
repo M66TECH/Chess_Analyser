@@ -3,8 +3,10 @@ export type ModelProfile = 'fast' | 'reasoning' | 'general' | 'fallback';
 export interface ModelConfig {
   id: string;
   profile: ModelProfile;
-  /** Tokens minimum à allouer pour les modèles avec réflexion (ex: 300 pour DeepSeek R1 / GPT-OSS) */
+  /** Tokens minimum à allouer pour les modèles avec réflexion (ex: 1400 pour GPT-OSS / DeepSeek R1) */
   maxTokensFloor?: number;
+  /** Paramètres JSON supplémentaires spécifiques au modèle/fournisseur (ex: reasoning_effort) */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ProviderConfig {

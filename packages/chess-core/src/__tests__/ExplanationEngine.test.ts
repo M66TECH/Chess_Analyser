@@ -484,4 +484,20 @@ describe('ExplanationEngine.verifyCardFactualConsistency (P0.1)', () => {
     const res = ExplanationEngine.verifyCardFactualConsistency(card, dummyCtx.tactical_facts, dummyCtx);
     expect(res.isValid).toBe(true);
   });
+
+  it('autorise la case d\'arrivée du meilleur coup et les conseils préventifs sans faux rejet', () => {
+    const ctxWithBest = {
+      ...dummyCtx,
+      best: { san: 'd4', uci: 'd2d4', centipawn_gap: 15, pv_san: ['d4'] },
+    };
+    const card = {
+      headline: 'Développez votre centre',
+      insights: [
+        { kind: 'missed_move' as const, text: 'Le meilleur coup place le pion en d4 pour contrôler le centre.' },
+      ],
+      takeaway: 'Pensez à éviter de laisser vos pièces sans défense.',
+    };
+    const res = ExplanationEngine.verifyCardFactualConsistency(card, ctxWithBest.tactical_facts, ctxWithBest);
+    expect(res.isValid).toBe(true);
+  });
 });

@@ -310,7 +310,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
     try {
       const raw = await RiverAPI.complete(this.buildPrompt(context, level), this.SYSTEM_PROMPT, {
         temperature: 0.3,
-        maxTokens: 900,
+        maxTokens: 1400,
       });
 
       if (raw.startsWith('Le coach') || raw.startsWith('Impossible') || raw.startsWith('Analyse non disponible')) {
@@ -599,8 +599,13 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     const norm = fullText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
     // 1. Contrôle des affirmations de pièce en prise / indéfendue / non protégée
+    // (on exclut les conseils préventifs généraux du type « éviter de laisser ... sans défense »)
+    const normForHanging = norm.replace(
+      /\b(?:pour\s+)?(?:eviter|evitez|ne pas|jamais)\s+(?:de\s+)?(?:laisser|exposer|mettre)[^.!?]{0,60}/gi,
+      ''
+    );
     const claimsHanging =
-      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (?:une|votre|la) piece)\b/i.test(norm);
+      /\b(en prise|non protegee?s?|indefendue?s?|sans defense|peut etre pris[ee]?s?|laisse (?:une|votre|la) piece)\b/i.test(normForHanging);
 
     if (claimsHanging) {
       const hasHangingFact =
@@ -653,16 +658,29 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
       }
     }
 
-    // Résolution FEN résultante pour contrôles géométriques stricts
+    // Résolution FEN résultante (coup joué ET meilleur coup recommandé) pour contrôles géométriques stricts
     let fenAfter = context.tactical_facts?.fen_after;
     if (!fenAfter) {
       try {
         const setup = parseFen(context.fen_before).unwrap();
         const pos = Chess.fromSetup(setup).unwrap();
-        const m = parseUci(context.played.uci);
+        const m = context.played.uci ? parseUci(context.played.uci) : undefined;
         if (m && pos.isLegal(m)) {
           pos.play(m);
           fenAfter = makeFen(pos.toSetup());
+        }
+      } catch {}
+    }
+
+    let fenAfterBest: string | undefined;
+    if (context.best?.uci) {
+      try {
+        const setupBest = parseFen(context.fen_before).unwrap();
+        const posBest = Chess.fromSetup(setupBest).unwrap();
+        const bestMove = parseUci(context.best.uci);
+        if (bestMove && posBest.isLegal(bestMove)) {
+          posBest.play(bestMove);
+          fenAfterBest = makeFen(posBest.toSetup());
         }
       } catch {}
     }
@@ -827,8 +845,11 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
       if (expectedRole) {
         const existsBefore = checkPieceExistsOnSquare(context.fen_before, expectedRole, squareStr);
         const existsAfter = fenAfter ? checkPieceExistsOnSquare(fenAfter, expectedRole, squareStr) : false;
+        const existsAfterBest = fenAfterBest
+          ? checkPieceExistsOnSquare(fenAfterBest, expectedRole, squareStr)
+          : false;
 
-        if (!existsBefore && !existsAfter) {
+        if (!existsBefore && !existsAfter && !existsAfterBest) {
           return {
             isValid: false,
             reason: `Affirmation hallucinatoire : aucun(e) ${pieceNameFr} sur la case ${squareStr} sur l'échiquier.`,
@@ -841,13 +862,20 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         );
         const claimsThreatened = /\b(prise|prend|attaqu|capture|indefendu|menac)/i.test(contextAround);
         if (claimsThreatened && facts) {
-          const playedFrom = context.played.uci.slice(0, 2);
-          const playedTo = context.played.uci.slice(2, 4);
+          const playedUci = context.played.uci ?? '';
+          const bestUci = context.best?.uci ?? '';
+          const playedFrom = playedUci.slice(0, 2);
+          const playedTo = playedUci.slice(2, 4);
+          const bestFrom = bestUci.slice(0, 2);
+          const bestTo = bestUci.slice(2, 4);
           const isSquareInFacts =
             facts.newly_undefended_own_pieces.some((p) => p.square === squareStr) ||
             facts.newly_undefended_enemy_pieces.some((p) => p.square === squareStr) ||
             playedTo === squareStr ||
-            playedFrom === squareStr;
+            playedFrom === squareStr ||
+            bestTo === squareStr ||
+            bestFrom === squareStr ||
+            existsAfterBest;
 
           if (!isSquareInFacts && !context.played.captured) {
             return {
@@ -869,7 +897,7 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
       const targetRoleFr = threatMatch[4];
       const targetRole = roleMap[targetRoleFr];
       const oppColor: 'white' | 'black' = playerColor === 'white' ? 'black' : 'white';
-      const playedTo = context.played.uci.slice(2, 4);
+      const playedTo = (context.played.uci ?? '').slice(2, 4);
       const subjectMatchesPlayedPiece =
         subjectRole !== undefined && checkPieceExistsOnSquare(fenAfter, subjectRole, playedTo);
 

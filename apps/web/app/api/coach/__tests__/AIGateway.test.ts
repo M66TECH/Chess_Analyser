@@ -261,4 +261,67 @@ describe('AI Gateway & Circuit Breaker Architecture (Spécification v2)', () => 
     expect(groqModels[0]).toBe('openai/gpt-oss-120b');
     expect(groqModels).toContain('openai/gpt-oss-20b');
   });
+
+  it('Scénario 12 : Transmet extraBody (ex: reasoning_effort) et bascule sur le modèle suivant si JSON tronqué', async () => {
+    process.env.TEST_API_KEYS = 'key1';
+
+    const providerWithReasoning: ProviderConfig = {
+      ...testProvider,
+      defaultModels: [
+        { id: 'model-a', profile: 'reasoning', maxTokensFloor: 1400, extraBody: { reasoning_effort: 'low' } },
+        { id: 'model-b', profile: 'fast' },
+      ],
+    };
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ finish_reason: 'length', message: { content: '{"headline":"Tronc' } }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ finish_reason: 'stop', message: { content: '{"headline":"Clair","insights":[],"takeaway":"Bien"}' } }],
+        }),
+      });
+
+    const gateway = new AIGateway({ providers: [providerWithReasoning] });
+    const result = await gateway.complete({
+      messages: [{ role: 'user', content: 'Analyse' }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.modelUsed).toContain('model-b');
+    const firstBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(firstBody.reasoning_effort).toBe('low');
+    expect(firstBody.max_tokens).toBe(1400);
+  });
+
+  it('Scénario 13 : Un fournisseur P1 sain (~2000ms) reste prioritaire devant un P2 non encore mesuré', () => {
+    const p1: ProviderConfig = { ...testProvider, id: 'p1', defaultPriority: 1 };
+    const p2: ProviderConfig = { ...testProvider, id: 'p2', defaultPriority: 2 };
+
+    const scoreP1 = HealthScorer.calculateScore(p1, {
+      totalCalls: 1,
+      successCalls: 1,
+      totalLatencyMs: 2000,
+      avgLatencyMs: 2000,
+      consecutive5xx: 0,
+      hostCooldownUntil: 0,
+    });
+    const scoreP2Untested = HealthScorer.calculateScore(p2, {
+      totalCalls: 0,
+      successCalls: 0,
+      totalLatencyMs: 0,
+      avgLatencyMs: 0,
+      consecutive5xx: 0,
+      hostCooldownUntil: 0,
+    });
+
+    expect(scoreP1).toBeGreaterThan(scoreP2Untested);
+  });
 });

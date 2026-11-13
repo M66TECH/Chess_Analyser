@@ -29,7 +29,7 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  * returns an empty `content` (~300 reasoning tokens is the observed floor).
  * 1200 leaves room for the thinking *and* the coach's Markdown answer.
  */
-const DEFAULT_MAX_TOKENS = 900;
+const DEFAULT_MAX_TOKENS = 1400;
 
 /**
  * Client for the `/api/coach` multi-provider AI gateway (Groq -> OpenRouter -> TokenHarbor).
