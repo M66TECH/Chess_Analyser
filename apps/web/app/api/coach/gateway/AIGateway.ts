@@ -291,8 +291,13 @@ export class AIGateway {
     };
 
     const choice = data.choices?.[0];
+    const strippedContent = (choice?.message?.content ?? '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .trim();
     const content =
-      choice?.message?.content?.trim() || choice?.message?.reasoning_content?.trim() || '';
+      strippedContent ||
+      (choice?.message?.reasoning_content ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim() ||
+      '';
 
     if (!content) {
       throw new Error('Empty response from model');

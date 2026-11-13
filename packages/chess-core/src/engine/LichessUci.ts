@@ -121,8 +121,8 @@ export const UCI_INIT_COMMANDS = [
  * monter à 3 à la demande.
  */
 export const UCI_ENGINE_OPTIONS = {
-  threads: 2,
-  hash: 32,
+  threads: 1,
+  hash: 64,
   multiPv: 1,
 } as const;
 

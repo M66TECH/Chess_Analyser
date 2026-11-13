@@ -126,6 +126,18 @@ describe('CloudEvalService', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('200 { miss: true } → mis en cache négatif pendant le TTL sans refetch immédiat', async () => {
+    const fetchSpy = mockFetch([{ status: 200, body: { miss: true } }]);
+    const promise = CloudEvalService.fetch(WHITE_TO_MOVE, 3, ORIGIN);
+    await vi.runAllTimersAsync();
+    expect(await promise).toBeNull();
+
+    const promise2 = CloudEvalService.fetch(WHITE_TO_MOVE, 3, ORIGIN);
+    await vi.runAllTimersAsync();
+    expect(await promise2).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('erreur réseau → null', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));

@@ -44,9 +44,12 @@ const AWAITING = Symbol('awaiting');
 
 const THROTTLE_MS = 700;
 const CACHE_MAX_FENS = 4096;
+const NEGATIVE_TTL_MS = 10 * 60 * 1000;
 
 export class CloudEvalService {
   private static cache: Map<string, CloudEvalHit | typeof AWAITING> = new Map();
+  /** Cache négatif TTL pour les positions absentes du Cloud Eval (`{ miss: true }`). */
+  private static missCache: Map<string, number> = new Map();
 
   /** Instant du dernier envoi réel (fenêtre de throttle lila = 700 ms). */
   private static lastFetchAt = 0;
@@ -57,6 +60,7 @@ export class CloudEvalService {
 
   static clear() {
     this.cache.clear();
+    this.missCache.clear();
   }
 
   /** Nombre de FEN en cache (stats/debug). */
@@ -80,6 +84,12 @@ export class CloudEvalService {
       // Hit : réémis immédiatement, comme `fetch()` de lila qui renvoie
       // `toCeval(fetched)` sans refetch.
       return Promise.resolve(fetched === AWAITING ? null : this.toEvaluations(fetched));
+    }
+
+    const missExpiresAt = this.missCache.get(fen);
+    if (missExpiresAt !== undefined) {
+      if (Date.now() < missExpiresAt) return Promise.resolve(null);
+      this.missCache.delete(fen);
     }
 
     // Dédoublonnage : si une requête pour ce FEN est déjà en attente d'envoi
@@ -124,18 +134,23 @@ export class CloudEvalService {
    * `fetchedByFen` de lila — la conversion POV-trait ne se fait qu'en sortie
    * (`toEvaluations`), sinon un second passage double-inverserait les Noirs.
    */
-  private static settle(fen: string, hit: CloudEvalHit | null) {
+  private static settle(fen: string, hit: CloudEvalHit | null, cacheMiss = false) {
     if (hit) {
+      this.missCache.delete(fen);
       if (this.cache.size >= CACHE_MAX_FENS) {
         const oldest = this.cache.keys().next().value;
         if (oldest !== undefined) this.cache.delete(oldest);
       }
       this.cache.set(fen, hit);
     } else {
-      // 404/erreur : on retire l'`awaiting` pour permettre un refetch.
-      // (lila garde `awaitingEval` à vie — divergence assumée pour
-      // tolérer les échecs réseau ponctuels)
       this.cache.delete(fen);
+      if (cacheMiss) {
+        if (this.missCache.size >= CACHE_MAX_FENS) {
+          const oldestMiss = this.missCache.keys().next().value;
+          if (oldestMiss !== undefined) this.missCache.delete(oldestMiss);
+        }
+        this.missCache.set(fen, Date.now() + NEGATIVE_TTL_MS);
+      }
     }
 
     const waiters = this.waiters.get(fen) ?? [];
@@ -159,8 +174,12 @@ export class CloudEvalService {
         this.settle(fen, null);
         return;
       }
-      const hit = (await res.json()) as CloudEvalHit;
-      this.settle(fen, hit);
+      const payload = (await res.json()) as CloudEvalHit & { miss?: boolean };
+      if (payload && payload.miss === true) {
+        this.settle(fen, null, true);
+        return;
+      }
+      this.settle(fen, payload);
     } catch {
       this.settle(fen, null);
     }

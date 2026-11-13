@@ -3,6 +3,7 @@ import { AIGateway } from '../gateway/AIGateway';
 import { MemoryStateStore, hashKey } from '../gateway/MemoryStateStore';
 import { CircuitBreaker } from '../gateway/CircuitBreaker';
 import { HealthScorer } from '../gateway/HealthScorer';
+import { PROVIDERS_REGISTRY } from '../registry/providers.config';
 import type { ProviderConfig } from '../registry/types';
 
 describe('AI Gateway & Circuit Breaker Architecture (Spécification v2)', () => {
@@ -223,5 +224,41 @@ describe('AI Gateway & Circuit Breaker Architecture (Spécification v2)', () => 
 
     expect(result.ok).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('Scénario 10 : Nettoie les balises <think>...</think> de la réponse du modèle', async () => {
+    process.env.TEST_API_KEYS = 'key1';
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: '<think>Raisonnement interne à masquer.</think>{"headline":"Bon coup !","insights":[{"kind":"played_move","text":"Votre cavalier contrôle le centre."}],"takeaway":"Continuez ainsi."}',
+            },
+          },
+        ],
+      }),
+    });
+
+    const gateway = new AIGateway({ providers: [testProvider] });
+    const result = await gateway.complete({
+      messages: [{ role: 'user', content: 'Analyse ce coup' }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.content).not.toContain('<think>');
+    expect(result.content).toContain('"headline":"Bon coup !"');
+  });
+
+  it('Scénario 11 : Registre configuré selon la priorité Groq → OpenRouter → TokenHarbor', () => {
+    const ordered = [...PROVIDERS_REGISTRY].sort((a, b) => a.defaultPriority - b.defaultPriority);
+    expect(ordered.map(p => p.id)).toEqual(['groq', 'openrouter', 'tokenharbor']);
+
+    const groqModels = ordered[0].defaultModels.map(m => (typeof m === 'string' ? m : m.id));
+    expect(groqModels[0]).toBe('openai/gpt-oss-120b');
+    expect(groqModels).toContain('openai/gpt-oss-20b');
   });
 });

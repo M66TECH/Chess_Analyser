@@ -233,8 +233,8 @@ export class AnalysisPipeline {
         return;
       }
 
-      // Succession 3 : Sonde Cloud Eval (prioritaire sur le calcul local)
-      CloudEvalService.fetch(fenAfter, 1)
+      // Succession 3 : Sonde Cloud Eval (prioritaire sur le calcul local, 3 PV partagées avec l'UI)
+      CloudEvalService.fetch(fenAfter, 3)
         .then((cloudEvals) => {
           if (!cloudEvals || cloudEvals.length === 0) return;
           const cloudBest = cloudEvals[0];
@@ -361,18 +361,28 @@ export class AnalysisPipeline {
     if (this.pendingMove && latest.fen !== this.pendingMove.fenAfter) return;
 
     // Si la recherche théorique est encore en cours, on attend au maximum 1500 ms
-    // pour ne pas bloquer l'affichage immédiat de l'évaluation du moteur.
-    if (!this.theoryResolved) {
-      if (!this.theoryUiTimeout) {
-        this.theoryUiTimeout = setTimeout(() => {
-          this.theoryUiTimeout = null;
-          if (this.pedagogyDone && !this.theoryResolved && this.pendingMove && this.latestEval) {
-            // Publication sans théorie : le diagnostic sera complété dès réception de l'API
-            this.runPedagogy(this.latestEval);
-          }
-        }, 1500);
+    // uniquement si l'on est encore potentiellement dans l'ouverture ; passé le
+    // milieu de partie ou après sortie confirmée du répertoire, publication immédiate.
+    if (!this.theoryResolved && this.pendingMove) {
+      const { color, moveNumber, fenBefore } = this.pendingMove;
+      const currentPly = color === 'white' ? moveNumber * 2 - 1 : moveNumber * 2;
+      const pieceCount = fenBefore.split(' ')[0]?.replace(/[^a-zA-Z]/g, '').length ?? 32;
+      const pastOpening =
+        currentPly > (this.lastConfirmedTheoryPly ?? 0) + 6 ||
+        pieceCount <= 22;
+
+      if (!pastOpening) {
+        if (!this.theoryUiTimeout) {
+          this.theoryUiTimeout = setTimeout(() => {
+            this.theoryUiTimeout = null;
+            if (this.pedagogyDone && !this.theoryResolved && this.pendingMove && this.latestEval) {
+              // Publication sans théorie : le diagnostic sera complété dès réception de l'API
+              this.runPedagogy(this.latestEval);
+            }
+          }, 1500);
+        }
+        return;
       }
-      return;
     }
 
     if (this.theoryUiTimeout) {

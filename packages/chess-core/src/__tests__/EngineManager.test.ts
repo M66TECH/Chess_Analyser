@@ -194,7 +194,7 @@ describe('EngineManager', () => {
       expect(started).toHaveBeenCalledTimes(1);
     });
 
-    it('étiquette chaque évaluation avec le FEN analysé', () => {
+    it('étiquette chaque évaluation avec le FEN analysé et bloque les résidus avant readyok', () => {
       const { engine, worker, eventBus } = setup();
       const received: EngineEvaluation[] = [];
       eventBus.on('EngineEvaluationUpdated', e => received.push(e));
@@ -202,7 +202,16 @@ describe('EngineManager', () => {
       engine.analyze(FEN_START, 10);
       worker.emit('info depth 8 score cp 34 pv e2e4');
 
+      // Nouvelle position pendant qu'une recherche tourne → barrière stop/isready.
       engine.analyze(FEN_OTHER, 10);
+      // Un `info` résiduel ou `bestmove` de l'ancienne recherche ne doit JAMAIS
+      // être étiqueté avec `FEN_OTHER` ni déclencher `go` avant `readyok`.
+      worker.emit('info depth 9 score cp 50 pv d2d4');
+      worker.emit('bestmove d2d4');
+      expect(worker.sent).not.toContain(`position fen ${FEN_OTHER}`);
+
+      // Franchissement de la barrière `readyok` : seule l'analyse de FEN_OTHER démarre.
+      worker.emit('readyok');
       worker.emit('info depth 8 score cp -12 pv e7e5');
 
       expect(received).toHaveLength(2);
@@ -327,6 +336,7 @@ describe('EngineManager', () => {
 
       engine.analyzeThreat(FEN_START, 10);
       engine.analyze(FEN_START, 10);
+      worker.emit('readyok');
       worker.emit('info depth 8 score cp 15 pv e2e4');
 
       expect(normal).toHaveBeenCalledTimes(1);

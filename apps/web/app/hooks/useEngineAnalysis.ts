@@ -27,6 +27,33 @@ export interface UseEngineAnalysisOptions {
   showNotice: (msg: string, durationMs?: number) => void;
 }
 
+/** Profondeur locale minimale avant d'afficher une flèche verte (évite le bruit tactique depth 1..11). */
+const MIN_ARROW_DEPTH = 12;
+
+function buildAnalysisShapes(
+  pvs: Map<number, EngineEvaluation>,
+  showLines: boolean
+): Array<{ orig: string; dest?: string; brush: string }> {
+  const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
+  const pv3 = pvs.get(3);
+  const pv2 = pvs.get(2);
+  const pv1 = pvs.get(1);
+
+  const alternatives: Array<[EngineEvaluation | undefined, string]> = showLines
+    ? [
+        [pv3, 'paleBlue'],
+        [pv2, 'paleBlue'],
+      ]
+    : [];
+
+  // Flèches d'analyse comme dans Lichess : le meilleur coup (PV 1) est une flèche verte nette
+  for (const [pv, brush] of [...alternatives, [pv1, 'green']] as Array<[EngineEvaluation | undefined, string]>) {
+    const shape = pvToShape(pv?.pv, brush);
+    if (shape) newShapes.push(shape);
+  }
+  return newShapes;
+}
+
 export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEngineAnalysisOptions) {
   const [evalState, setEvalState] = useState<EvalState>({ winProb: 0, cp: 0, depth: 0, status: 'idle' });
   const evalStateRef = useRef<EvalState>(evalState);
@@ -165,28 +192,30 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
       const eventBus = gm.eventBus;
 
       const unsubEval = eventBus.on('EngineEvaluationUpdated', (evaluation) => {
+        const currentFen = gm.moveManager.getFen();
+        // Filtrer AVANT tout stockage multiPv ou shape pour qu'une évaluation d'une
+        // autre position (PV1, PV2, PV3) ne pollue jamais la position affichée.
+        if (evaluation.fen && evaluation.fen !== currentFen) return;
+
+        // Garde de préséance AVANT stockage multiPvs : ne jamais écraser une évaluation
+        // cloud à haute profondeur par une évaluation locale moins profonde.
+        const currentEval = evalAccum.current.value ?? evalStateRef.current;
+        if (
+          currentEval.source === 'cloud' &&
+          evaluation.source !== 'cloud' &&
+          currentEval.depth >= evaluation.depth
+        ) {
+          return;
+        }
+
         multiPvs.current.set(evaluation.multiPv || 1, evaluation);
 
         if (!evaluation.multiPv || evaluation.multiPv === 1) {
-          const currentFen = gm.moveManager.getFen();
-          if (evaluation.fen && evaluation.fen !== currentFen) return;
-
-          // Garde de préséance : ne jamais écraser une évaluation cloud à haute profondeur
-          // par une évaluation locale de profondeur inférieure
-          const currentEval = evalAccum.current.value ?? evalStateRef.current;
-          if (
-            currentEval.source === 'cloud' &&
-            evaluation.source !== 'cloud' &&
-            currentEval.depth >= evaluation.depth
-          ) {
-            return;
-          }
-
           const turn = currentFen.split(' ')[1] === 'w' ? 'white' : 'black';
           const normCp = EvalNormalizer.normalize(evaluation.cp, evaluation.mate, turn);
           const sign = turn === 'white' ? 1 : -1;
 
-          evalAccum.current.value = {
+          const nextState: EvalState = {
             winProb: EvalNormalizer.cpToWinningChances(normCp),
             cp: typeof evaluation.cp === 'number' ? normCp : undefined,
             mate: typeof evaluation.mate === 'number' ? evaluation.mate * sign : undefined,
@@ -194,29 +223,39 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
             source: evaluation.source ?? 'local',
             status: evaluation.depth >= DEFAULT_TARGET_DEPTH ? 'ready' : 'analyzing',
           };
+          evalAccum.current.value = nextState;
+          evalStateRef.current = nextState;
           scheduleEvalFlush();
         }
 
-        const newShapes: Array<{ orig: string; dest?: string; brush: string }> = [];
-        const pv3 = multiPvs.current.get(3);
-        const pv2 = multiPvs.current.get(2);
+        // Ne dessiner la flèche verte qu'à partir d'une profondeur fiable (ou Cloud / mat)
+        // afin d'éviter des coups instinctifs erronés affichés à profondeur 1..11.
         const pv1 = multiPvs.current.get(1);
+        const arrowReliable =
+          evaluation.source === 'cloud' ||
+          typeof evaluation.mate === 'number' ||
+          evaluation.depth >= MIN_ARROW_DEPTH ||
+          pv1?.source === 'cloud' ||
+          typeof pv1?.mate === 'number' ||
+          (pv1?.depth ?? 0) >= MIN_ARROW_DEPTH;
 
-        const alternatives: Array<[EngineEvaluation | undefined, string]> = showLinesRef.current
-          ? [
-              [pv3, 'paleBlue'],
-              [pv2, 'paleBlue'],
-            ]
-          : [];
+        if (!arrowReliable) return;
 
-        // Flèches d'analyse comme dans Lichess : le meilleur coup (PV 1) est une flèche verte nette
-        for (const [pv, brush] of [...alternatives, [pv1, 'green']] as Array<[EngineEvaluation | undefined, string]>) {
-          const shape = pvToShape(pv?.pv, brush);
-          if (shape) newShapes.push(shape);
-        }
-
-        shapeAccum.current.value = newShapes;
+        shapeAccum.current.value = buildAnalysisShapes(multiPvs.current, showLinesRef.current);
         scheduleShapeFlush();
+      });
+
+      const unsubFinished = eventBus.on('AnalysisFinished', () => {
+        if (threatModeRef.current || multiPvs.current.size === 0) return;
+        const shapesReady = buildAnalysisShapes(multiPvs.current, showLinesRef.current);
+        if (shapesReady.length > 0) {
+          shapeAccum.current.value = null;
+          if (shapeRaf.current !== null) {
+            clearTimeout(shapeRaf.current);
+            shapeRaf.current = null;
+          }
+          setShapes(shapesReady);
+        }
       });
 
       const unsubThreat = eventBus.on('ThreatEvaluationUpdated', (evaluation) => {
@@ -243,7 +282,12 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
       });
 
       const unsubStarted = eventBus.on('AnalysisStarted', () => {
-        setEvalState((prev) => ({ ...prev, depth: 0, status: 'analyzing' }));
+        setEvalState((prev) => {
+          if (prev.source === 'cloud') return prev;
+          const next: EvalState = { ...prev, depth: 0, status: 'analyzing' };
+          evalStateRef.current = next;
+          return next;
+        });
       });
 
       const unsubError = eventBus.on('EngineError', (message) => {
@@ -254,14 +298,26 @@ export function useEngineAnalysis({ gmRef, fen, onFenChange, showNotice }: UseEn
       const unsubPos = eventBus.on('PositionChanged', ({ fen: newFen }) => {
         multiPvs.current.clear();
         threatPvs.current.clear();
+        evalAccum.current.value = null;
+        shapeAccum.current.value = null;
+        if (shapeRaf.current !== null) {
+          clearTimeout(shapeRaf.current);
+          shapeRaf.current = null;
+        }
+        setShapes([]);
         onFenChange(newFen);
-        setEvalState((prev) => ({ ...prev, source: undefined }));
+        setEvalState((prev) => {
+          const next: EvalState = { ...prev, depth: 0, source: undefined, status: 'analyzing' };
+          evalStateRef.current = next;
+          return next;
+        });
         fetchExplorerDebounced(newFen);
         fetchCloudEval(newFen);
       });
 
       return () => {
         unsubEval?.();
+        unsubFinished?.();
         unsubThreat?.();
         unsubStarted?.();
         unsubError?.();

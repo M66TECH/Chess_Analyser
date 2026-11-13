@@ -1,13 +1,12 @@
 /**
- * Ordered model chain for the coach. The first one is the preferred model; the
- * following ones are used only when the previous one fails (quota, outage,
- * unknown model...). Keep the order in sync with RIVER_MODELS in .env.example.
+ * Ordered model reference chain mirrored by the server gateway (`/api/coach`:
+ * Groq -> OpenRouter -> TokenHarbor).
  */
 export const COACH_MODELS = [
-  'qwen/qwen3.8-27b',
-  'deepseek-v4.1-flash:free',
   'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
   'openrouter/free',
+  'deepseek-v4.1-flash:free',
 ] as const;
 
 export type CoachModel = (typeof COACH_MODELS)[number];
@@ -30,13 +29,13 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  * returns an empty `content` (~300 reasoning tokens is the observed floor).
  * 1200 leaves room for the thinking *and* the coach's Markdown answer.
  */
-const DEFAULT_MAX_TOKENS = 1200;
+const DEFAULT_MAX_TOKENS = 900;
 
 /**
- * Client for the River OpenAI-compatible gateway.
+ * Client for the `/api/coach` multi-provider AI gateway (Groq -> OpenRouter -> TokenHarbor).
+ * Exported as both `RiverAPI` (legacy alias) and `CoachAPI`.
  *
- * The browser never sees the API key: it calls /api/coach, which forwards to
- * the gateway server-side and walks COACH_MODELS in order.
+ * The browser never sees API keys: `/api/coach` routes requests server-side.
  */
 export class RiverAPI {
   public static async fetchChatCompletion(
@@ -57,7 +56,7 @@ export class RiverAPI {
       });
 
       if (!response.ok) {
-        console.error('[RiverAPI] HTTP error:', response.status, response.statusText);
+        console.error('[CoachAPI] HTTP error:', response.status, response.statusText);
         return 'Le coach est momentanément indisponible.';
       }
 
@@ -68,7 +67,7 @@ export class RiverAPI {
       };
 
       if (data.error) {
-        console.error('[RiverAPI] Gateway error:', data.error);
+        console.error('[CoachAPI] Gateway error:', data.error);
         return 'Le coach est momentanément indisponible.';
       }
 
@@ -76,9 +75,9 @@ export class RiverAPI {
       return content.length > 0 ? content : 'Analyse non disponible.';
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        console.error('[RiverAPI] The coach timed out.');
+        console.error('[CoachAPI] The coach timed out.');
       } else {
-        console.error('[RiverAPI] Network error:', error);
+        console.error('[CoachAPI] Network error:', error);
       }
       return 'Impossible de contacter le coach.';
     }
@@ -93,3 +92,5 @@ export class RiverAPI {
     return this.fetchChatCompletion([{ role: 'user', content: prompt }], systemPrompt, options);
   }
 }
+
+export const CoachAPI = RiverAPI;

@@ -14,25 +14,12 @@ export const PROVIDERS_REGISTRY: ProviderConfig[] = [
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
     envKeyName: 'GROQ_API_KEYS',
     envModelsName: 'GROQ_MODELS',
-    defaultPriority: 1, // Priorité 1 : Ultra-rapide (~390ms)
-    timeoutMs: 6_000,
-    defaultModels: [
-      { id: 'qwen/qwen3.8-27b', profile: 'fast' },
-      { id: 'openai/gpt-oss-120b', profile: 'reasoning', maxTokensFloor: 300 },
-    ],
-  },
-  {
-    id: 'tokenharbor',
-    name: 'TokenHarbor',
-    baseUrl: 'https://tokenharbor.ai/v1/chat/completions',
-    envKeyName: 'TOKENHARBOR_API_KEYS',
-    envModelsName: 'TOKENHARBOR_MODELS',
-    defaultPriority: 2, // Priorité 2 : Modèles gratuits stables
+    defaultPriority: 1, // Priorité 1 : Ultra-rapide
     timeoutMs: 8_000,
     defaultModels: [
-      { id: 'deepseek-v4.1-flash:free', profile: 'fast' },
-      { id: 'deepseek-v4-flash:free', profile: 'fast' },
-      { id: 'mimo-v2.6-flash:free', profile: 'general' },
+      { id: 'openai/gpt-oss-120b', profile: 'reasoning', maxTokensFloor: 350 },
+      { id: 'openai/gpt-oss-20b', profile: 'fast' },
+      { id: 'qwen/qwen3.8-27b', profile: 'reasoning', maxTokensFloor: 400 },
     ],
   },
   {
@@ -41,15 +28,29 @@ export const PROVIDERS_REGISTRY: ProviderConfig[] = [
     baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
     envKeyName: 'OPENROUTER_API_KEY',
     envModelsName: 'OPENROUTER_MODELS',
-    defaultPriority: 3, // Priorité 3 : File de secours
-    timeoutMs: 9_000,
+    defaultPriority: 2, // Priorité 2 : Secours rapide et clair
+    timeoutMs: 8_000,
     customHeaders: {
       'HTTP-Referer': 'https://chess-analyzer.local',
       'X-Title': 'Chess Analyzer Coach',
     },
     defaultModels: [
+      { id: 'openrouter/free', profile: 'fast' },
       { id: 'cohere/north-mini-code:free', profile: 'general' },
-      { id: 'openrouter/free', profile: 'fallback' },
+    ],
+  },
+  {
+    id: 'tokenharbor',
+    name: 'TokenHarbor',
+    baseUrl: 'https://tokenharbor.ai/v1/chat/completions',
+    envKeyName: 'TOKENHARBOR_API_KEYS',
+    envModelsName: 'TOKENHARBOR_MODELS',
+    defaultPriority: 3, // Priorité 3 : Repli tertiaire
+    timeoutMs: 8_000,
+    defaultModels: [
+      { id: 'deepseek-v4.1-flash:free', profile: 'fast' },
+      { id: 'deepseek-v4-flash:free', profile: 'fast' },
+      { id: 'mimo-v2.6-flash:free', profile: 'general' },
     ],
   },
 ];

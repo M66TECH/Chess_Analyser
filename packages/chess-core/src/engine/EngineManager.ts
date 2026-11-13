@@ -63,6 +63,14 @@ export class EngineManager {
    */
   private searchInFlight = false;
 
+  /**
+   * Barrière active entre `stop` + `isready` et la réception de `readyok`.
+   * Tant qu'elle est vraie, toute réponse `info` ou `bestmove` appartient à la
+   * recherche précédente en cours d'arrêt et doit être ignorée pour éviter
+   * qu'un coup de l'ancienne position soit étiqueté avec le nouveau FEN.
+   */
+  private awaitingStopReady = false;
+
   /** Analyse demandée pendant qu'une recherche tourne ; envoyée après `readyok`. */
   private pendingGo: {
     fen: string;
@@ -151,6 +159,7 @@ export class EngineManager {
     this.pendingHistory = null;
     this.pendingGo = null;
     this.searchInFlight = false;
+    this.awaitingStopReady = false;
     this.currentAnalysisFen = null;
   }
 
@@ -158,7 +167,12 @@ export class EngineManager {
   public stop() {
     this.pendingGo = null;
     this.pendingFen = null;
+    this.pendingHistory = null;
+    this.currentAnalysisFen = null;
     if (!this.worker) return;
+    if (this.searchInFlight) {
+      this.awaitingStopReady = true;
+    }
     this.send('stop');
   }
 
@@ -169,6 +183,7 @@ export class EngineManager {
     this.pendingThreat = false;
     this.isThreatMode = false;
     this.pendingGo = null;
+    this.awaitingStopReady = false;
     this.currentAnalysisFen = null;
     if (!this.isReady) return;
     this.send('stop');
@@ -240,7 +255,9 @@ export class EngineManager {
       this.send(command);
     }
 
-    const threads = Math.max(1, this.config.concurrency || UCI_ENGINE_OPTIONS.threads);
+    // Les builds WASM actuels (sf_19_smallnet / stockfish.js) sont mono-thread sans pthreads :
+    // forcer Threads=1 évite l'allocation inutile d'état de split multi-thread.
+    const threads = UCI_ENGINE_OPTIONS.threads;
     this.send(`setoption name Threads value ${threads}`);
     this.send(`setoption name Hash value ${UCI_ENGINE_OPTIONS.hash}`);
     this.send(`setoption name MultiPV value ${this.currentMultiPv}`);
@@ -250,6 +267,7 @@ export class EngineManager {
 
   private handleReadyOk() {
     this.isReady = true;
+    this.awaitingStopReady = false;
 
     // Priorité 1 : une analyse attendait la fin de la précédente (barrière).
     if (this.pendingGo) {
@@ -277,8 +295,12 @@ export class EngineManager {
 
   private handleBestMove(msg: string) {
     // La recherche en cours est terminée : la barrière peut laisser passer
-    // l'analyse suivante.
+    // l'analyse suivante sauf si nous attendons encore `readyok`.
     this.searchInFlight = false;
+
+    if (this.awaitingStopReady) {
+      return;
+    }
 
     const best = parseBestMove(msg);
     if (best) {
@@ -293,6 +315,10 @@ export class EngineManager {
   }
 
   private handleInfo(msg: string) {
+    // Tant que la barrière `stop → isready → readyok` ou l'arrêt est actif,
+    // les lignes `info` proviennent d'une recherche révoquée et doivent être jetées.
+    if (this.awaitingStopReady || !this.currentAnalysisFen) return;
+
     const info = parseUciInfo(msg);
     if (!info) return;
 
@@ -368,17 +394,23 @@ export class EngineManager {
     history: { rootFen: string; moves: string[] } | undefined,
     startedEvent: 'AnalysisStarted' | 'ThreatAnalysisStarted'
   ) {
-    this.currentAnalysisFen = fen;
     this.pendingGo = { fen, depth, history, startedEvent };
 
     if (this.searchInFlight) {
       // Une recherche tourne : on l'arrête et on attend `readyok` avant `go`.
-      this.send('stop');
-      this.send('isready');
+      // On invalide immédiatement `currentAnalysisFen` et on active la barrière
+      // `awaitingStopReady` pour qu'aucun résidu de l'ancienne recherche ne soit réémis.
+      this.currentAnalysisFen = null;
+      if (!this.awaitingStopReady) {
+        this.awaitingStopReady = true;
+        this.send('stop');
+        this.send('isready');
+      }
       return;
     }
 
     // Rien en cours : on peut enchaîner directement.
+    this.awaitingStopReady = false;
     this.flushPendingGo();
   }
 

@@ -40,8 +40,12 @@ export async function GET(request: Request) {
     });
 
     if (res.status === 404) {
-      // Pas de hit cloud : forwardé tel quel, le client gère.
-      return NextResponse.json({ error: 'No cloud eval' }, { status: 404 });
+      // Pas de hit cloud : statut 200 { miss: true } avec cache CDN 10 min pour
+      // éviter le bruit rouge 404 en console navigateur tout en signalant l'absence au client.
+      return NextResponse.json(
+        { miss: true },
+        { status: 200, headers: { 'Cache-Control': 'public, max-age=600' } }
+      );
     }
     if (!res.ok) {
       console.error(`Lichess CloudEval error: ${res.status} ${res.statusText}`);

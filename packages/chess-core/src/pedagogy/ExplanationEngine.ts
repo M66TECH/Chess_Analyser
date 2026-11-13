@@ -256,9 +256,10 @@ Adresse-toi au joueur en VOUVOYANT (« vous », « votre ») : jamais « tu » n
 Les CLÉS du JSON restent en anglais pour la machine (headline, insights, kind, text, takeaway) — c'est le seul anglais autorisé.
 
 # Format
-Réponds UNIQUEMENT par un objet JSON valide :
+Réponds UNIQUEMENT par un objet JSON valide (sans balise <think>, ni texte avant ou après) :
 {"headline":"...","insights":[{"kind":"played_move","text":"..."}],"takeaway":"..."}
-kinds autorisés : played_move, missed_move, mistake, good_decision, consequence.`;
+kinds autorisés : played_move, missed_move, mistake, good_decision, consequence.
+Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, pièce laissée sans défense, sécurité du roi, contrôle du centre) en français naturel.`;
 
   /**
    * Budget LLM par session (P1-9). Compteur statique : une session =
