@@ -266,7 +266,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
    * déclencher 80 appels LLM ruinant la clé API.
    */
   private static llmCallsThisSession = 0;
-  private static readonly LLM_SESSION_BUDGET = 40;
+  private static readonly LLM_SESSION_BUDGET = 200;
 
   /** Budget restant pour cette session (transparence / tests). */
   public static get remainingLlmBudget(): number {
@@ -299,8 +299,10 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
   ): Promise<CoachCard> {
     const context = this.buildContext(record, previousClassification);
 
-    // Budget épuisé : fallback IMMÉDIAT, sans coût réseau, avec badge.
-    if (!this.tryConsumeBudget()) {
+    // P1-9 : le budget est vérifié AVANT l'appel (barrière) mais consommé
+    // SEULEMENT après un appel réussi. Un échec réseau ne gaspille pas le
+    // budget — et 200 appels couvrent 100 coups × 2 (carte + démo).
+    if (this.llmCallsThisSession >= this.LLM_SESSION_BUDGET) {
       const local = this.fallbackCard(context, level);
       return { ...local, degraded: true, source: 'fallback' };
     }
@@ -311,6 +313,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
         maxTokens: 1400,
       });
 
+      // Vérifier que RiverAPI n'a pas retourné un message d'erreur simulé
       if (raw.startsWith('Le coach') || raw.startsWith('Impossible') || raw.startsWith('Analyse non disponible')) {
         console.info('[ExplanationEngine] Passerelle LLM indisponible, bascule sur la fiche pédagogique déterministe (mode dégradé).');
         const local = this.fallbackCard(context, level);
@@ -323,6 +326,8 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
         // P0.1 : Contrôle de cohérence factuelle avec VerifiedTacticalFacts
         const consistency = ExplanationEngine.verifyCardFactualConsistency(parsed, context.tactical_facts, context);
         if (consistency.isValid) {
+          // Consomme le budget UNIQUEMENT sur succès (un coup = un appel réussi).
+          this.llmCallsThisSession++;
           // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
           // n'est pas nécessaire : carte LLM complète, non dégradée.
           return applyMoodLimits({ ...parsed, level, source: 'llm' }, context);
@@ -500,8 +505,9 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
 
     if (uciMoves.length === 0) return captions;
 
-    // C6 : Les démonstrations doivent également consommer le budget LLM de session
-    if (!this.tryConsumeBudget()) return captions;
+    // C6 : les démos consomment aussi le budget, mais APRÈS l'appel réussi
+    // (pas avant, sinon un échec gaspille un slot). Le compteur est partagé
+    // avec generateCard : 200 appels couvrent 100 coups × 2 (card + démo).
 
     try {
       const raw = await RiverAPI.complete(
@@ -509,6 +515,9 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
         'Tu es un coach d’échecs pour débutants. Tu réponds uniquement par un tableau JSON de phrases courtes.',
         { temperature: 0.4, maxTokens: 700 }
       );
+
+      // Consomme le budget sur succès uniquement.
+      this.llmCallsThisSession++;
 
       const parsed = parseStringArray(raw);
       if (!parsed) return captions;

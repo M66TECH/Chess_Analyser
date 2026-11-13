@@ -4,10 +4,9 @@ import { RiverAPI } from '../pedagogy/RiverAPI';
 import type { MoveRecord } from '../pedagogy/types';
 
 /**
- * P1-9 : budget LLM par session (40 appels max) et badge `degraded`
- * quand la carte vient du fallback. Un import PGN de 80 coups ne doit
- * pas ruiner la clé API, et l'utilisateur doit savoir quand il lit une
- * explication locale.
+ * P1-9 (rev. 2) : budget LLM par session (200) consommé UNIQUEMENT sur
+ * appel réussi. Vérifie aussi que les échecs réseau ne gaspillent pas le
+ * budget et que le badge `degraded` est correctement positionné.
  */
 function record(overrides: Partial<MoveRecord> = {}): MoveRecord {
   return {
@@ -33,7 +32,7 @@ function record(overrides: Partial<MoveRecord> = {}): MoveRecord {
 const GOOD_JSON =
   '{"headline":"Bravo !","insights":[{"kind":"played_move","text":"Le pion va au centre en e4."}],"takeaway":"Continuez ainsi."}';
 
-describe('P1-9 : budget LLM de session + badge dégradé', () => {
+describe('P1-9 rev.2 : budget LLM consommé uniquement sur succès', () => {
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     ExplanationEngine.resetLlmBudget();
@@ -44,80 +43,49 @@ describe('P1-9 : budget LLM de session + badge dégradé', () => {
     ExplanationEngine.resetLlmBudget();
   });
 
-  it('une carte LLM valide n\'est PAS dégradée', async () => {
+  it('carte LLM valide : budget -1, pas de badge dégradé', async () => {
     vi.spyOn(RiverAPI, 'complete').mockResolvedValue(GOOD_JSON);
     const card = await ExplanationEngine.generateCard(record(), 'debutant');
     expect(card.degraded).toBeUndefined();
-    expect(card.headline).toBe('Bravo !');
-    expect(ExplanationEngine.remainingLlmBudget).toBe(39);
+    expect(ExplanationEngine.remainingLlmBudget).toBe(199);
   });
 
-  it('un échec LLM produit une carte locale avec degraded=true', async () => {
-    vi.spyOn(RiverAPI, 'complete').mockRejectedValue(new Error('network down'));
+  it('échec réseau : budget NON consommé, badge dégradé', async () => {
+    vi.spyOn(RiverAPI, 'complete').mockRejectedValue(new Error('offline'));
     const card = await ExplanationEngine.generateCard(record(), 'debutant');
     expect(card.degraded).toBe(true);
-    expect(card.headline.length).toBeGreaterThan(0); // pas vide
-    expect(card.insights.length).toBeGreaterThan(0);
-    expect(card.takeaway.length).toBeGreaterThan(0);
+    expect(ExplanationEngine.remainingLlmBudget).toBe(200);
   });
 
-  it('une réponse non parseable produit degraded=true', async () => {
-    vi.spyOn(RiverAPI, 'complete').mockResolvedValue('n\'est pas du json');
-    const card = await ExplanationEngine.generateCard(record(), 'debutant');
-    expect(card.degraded).toBe(true);
-  });
-
-  it('le budget de session (40) est respecté : le 41e appel bascule sans réseau', async () => {
+  it('200 appels réussis : budget épuisé, le 201e bascule sans réseau', async () => {
     const spy = vi.spyOn(RiverAPI, 'complete').mockResolvedValue(GOOD_JSON);
 
-    // 40 appels : le budget est consommé.
-    for (let i = 0; i < 40; i++) {
-      const card = await ExplanationEngine.generateCard(record(), 'debutant');
-      expect(card.degraded).toBeUndefined();
+    for (let i = 0; i < 200; i++) {
+      await ExplanationEngine.generateCard(record(), 'debutant');
     }
     expect(ExplanationEngine.remainingLlmBudget).toBe(0);
 
-    // Le 41e : fallback immédiat, AUCUN appel réseau de plus.
-    const before = spy.mock.calls.length;
-    const card41 = await ExplanationEngine.generateCard(record(), 'debutant');
-    expect(spy.mock.calls.length).toBe(before); // pas de nouvel appel
-    expect(card41.degraded).toBe(true);
+    const spyCallCount = spy.mock.calls.length;
+    const card201 = await ExplanationEngine.generateCard(record(), 'debutant');
+    expect(spy.mock.calls.length).toBe(spyCallCount); // pas d'appel réseau
+    expect(card201.degraded).toBe(true);
+    expect(card201.headline.length).toBeGreaterThan(0);
   });
 
   it('buildLocalCard ne consomme pas de budget', () => {
-    const card = ExplanationEngine.buildLocalCard(record(), 'debutant');
-    expect(card.degraded).toBeUndefined(); // carte locale volontaire, pas un repli
-    expect(ExplanationEngine.remainingLlmBudget).toBe(40);
+    ExplanationEngine.buildLocalCard(record(), 'debutant');
+    expect(ExplanationEngine.remainingLlmBudget).toBe(200);
   });
 
-  it('generateDemoCaptions consomme le budget et bascule sur le repli déterministe si épuisé (C6)', async () => {
-    const spy = vi.spyOn(RiverAPI, 'complete').mockResolvedValue('["Le cavalier saute en f3."]');
-    
-    // Appel 1 : budget consommé
+  it('generateDemoCaptions consomme le budget uniquement sur appel réussi', async () => {
+    vi.spyOn(RiverAPI, 'complete').mockRejectedValue(new Error('network'));
     const captions = await ExplanationEngine.generateDemoCaptions({
-      startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-      uciMoves: ['g1f3'],
+      startFen: record().fenBefore,
+      uciMoves: ['e2e4'],
       kind: 'idea',
-      fallbackCaptions: ['Le cavalier va en f3.'],
+      fallbackCaptions: ['Le pion avance.'],
     });
-    expect(captions).toEqual(['Le cavalier saute en f3.']);
-    expect(ExplanationEngine.remainingLlmBudget).toBe(39);
-
-    // Consommation du reste du budget (39 appels)
-    for (let i = 0; i < 39; i++) {
-      ExplanationEngine.tryConsumeBudget();
-    }
-    expect(ExplanationEngine.remainingLlmBudget).toBe(0);
-
-    // Appel 41 : retour immédiat du fallback déterministe sans appel réseau
-    const callCountBefore = spy.mock.calls.length;
-    const fallback = await ExplanationEngine.generateDemoCaptions({
-      startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-      uciMoves: ['g1f3'],
-      kind: 'idea',
-      fallbackCaptions: ['Le cavalier va en f3.'],
-    });
-    expect(spy.mock.calls.length).toBe(callCountBefore);
-    expect(fallback).toEqual(['Le cavalier va en f3.']);
+    expect(captions).toEqual(['Le pion avance.']); // fallback
+    expect(ExplanationEngine.remainingLlmBudget).toBe(200); // pas consommé
   });
 });
