@@ -461,5 +461,100 @@ describe('AnalysisPipeline', () => {
       expect(record.classification).toBe('book');
       expect(record.coachCard?.headline).toBe('Ouverture solide');
     });
+
+    it('met à jour coachCard de façon immuable quand le LLM répond après buildLocalCard (anti-régression React)', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+
+      let resolveLlm!: (card: { headline: string; insights: Array<{ kind: 'played_move'; text: string }>; takeaway: string; level: 'intermediaire'; source: 'llm' }) => void;
+      vi.spyOn(ExplanationEngine, 'generateCard').mockImplementation(
+        () => new Promise((res) => { resolveLlm = res; })
+      );
+
+      eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: 20, pv: ['e2e4'] }));
+      const move = moveManager.playMove('e2e4');
+      const fenAfter = moveManager.getFen();
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: fenAfter, depth: 30, source: 'cloud', cp: -20, pv: ['e7e5'] }),
+      ]);
+
+      const snapshots: ReturnType<typeof pipeline.getMoveRecords>[] = [];
+      eventBus.on('PedagogyUpdated', () => {
+        snapshots.push(pipeline.getMoveRecords());
+      });
+
+      eventBus.emit('MovePlayed', {
+        fenBefore: START,
+        fenAfter,
+        move: 'e2e4',
+        nodeId: move.nodeId!,
+      });
+
+      await new Promise((r) => setTimeout(r, 25));
+      expect(snapshots).toHaveLength(1);
+      const firstCardRef = snapshots[0][0].coachCard;
+      expect(firstCardRef?.source).toBe('local');
+
+      resolveLlm({
+        headline: 'Contrôle immédiat du centre',
+        insights: [{ kind: 'played_move', text: 'Votre pion contrôle les cases centrales.' }],
+        takeaway: 'Développez ensuite vos pièces mineures.',
+        level: 'intermediaire',
+        source: 'llm',
+      });
+      await new Promise((r) => setTimeout(r, 25));
+
+      expect(snapshots).toHaveLength(2);
+      // L'ancienne référence capturée par React (`prev[0]`) ne doit JAMAIS avoir été mutée en place.
+      expect(snapshots[0][0].coachCard).toBe(firstCardRef);
+      expect(snapshots[0][0].coachCard?.source).toBe('local');
+      expect(snapshots[1][0].coachCard?.source).toBe('llm');
+      expect(snapshots[1][0].coachCard?.headline).toBe('Contrôle immédiat du centre');
+      expect(snapshots[1][0].coachCard).not.toBe(snapshots[0][0].coachCard);
+    });
+
+    it('setPlayerLevel met à jour de façon immuable et relance le LLM sur le coup actif', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+      const llmSpy = vi.spyOn(ExplanationEngine, 'generateCard')
+        .mockResolvedValueOnce({
+          headline: 'Explication niveau intermédiaire',
+          insights: [{ kind: 'played_move', text: 'Le pion prend le centre.' }],
+          takeaway: 'Développez ensuite vos pièces.',
+          level: 'intermediaire',
+          source: 'llm',
+        })
+        .mockResolvedValueOnce({
+          headline: 'Explication niveau adapté',
+          insights: [{ kind: 'played_move', text: 'Le pion prend de l’espace au centre.' }],
+          takeaway: 'Continuez le développement.',
+          level: 'debutant',
+          source: 'llm',
+        });
+
+      eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: 20, pv: ['e2e4'] }));
+      const move = moveManager.playMove('e2e4');
+      const fenAfter = moveManager.getFen();
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: fenAfter, depth: 30, source: 'cloud', cp: -20, pv: ['e7e5'] }),
+      ]);
+
+      eventBus.emit('MovePlayed', {
+        fenBefore: START,
+        fenAfter,
+        move: 'e2e4',
+        nodeId: move.nodeId!,
+      });
+      await new Promise((r) => setTimeout(r, 25));
+
+      const beforeSwitch = pipeline.getMoveRecords();
+      pipeline.setPlayerLevel('debutant');
+      await new Promise((r) => setTimeout(r, 25));
+
+      const afterSwitch = pipeline.getMoveRecords();
+      expect(llmSpy).toHaveBeenCalledTimes(2);
+      expect(beforeSwitch[0].coachCard?.level).toBe('intermediaire');
+      expect(afterSwitch[0].coachCard?.level).toBe('debutant');
+      expect(afterSwitch[0].coachCard?.source).toBe('llm');
+      expect(afterSwitch[0].coachCard).not.toBe(beforeSwitch[0].coachCard);
+    });
   });
 });

@@ -237,12 +237,15 @@ export default function Home() {
     gmRef.current = gm;
     const eventBus = gm.eventBus;
 
-    const unsubPedagogy = eventBus.on('PedagogyUpdated', (updatedRecord) => {
+    const unsubPedagogy = eventBus.on('PedagogyUpdated', () => {
       const next = gm.getMoveRecords();
       setRecords((prev) => {
-        if (prev.length !== next.length) return next;
-        const idx = next.findIndex((r) => r.nodeId === updatedRecord.nodeId);
-        if (idx !== -1 && prev[idx]?.coachCard === next[idx]?.coachCard) return prev;
+        if (
+          prev.length === next.length &&
+          prev.every((r, i) => r.nodeId === next[i].nodeId && r.coachCard === next[i].coachCard)
+        ) {
+          return prev;
+        }
         return next;
       });
       saveGameDebounced();

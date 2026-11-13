@@ -302,7 +302,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
     // Budget épuisé : fallback IMMÉDIAT, sans coût réseau, avec badge.
     if (!this.tryConsumeBudget()) {
       const local = this.fallbackCard(context, level);
-      return { ...local, degraded: true };
+      return { ...local, degraded: true, source: 'fallback' };
     }
 
     try {
@@ -314,7 +314,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
       if (raw.startsWith('Le coach') || raw.startsWith('Impossible') || raw.startsWith('Analyse non disponible')) {
         console.info('[ExplanationEngine] Passerelle LLM indisponible, bascule sur la fiche pédagogique déterministe (mode dégradé).');
         const local = this.fallbackCard(context, level);
-        return { ...local, degraded: true };
+        return { ...local, degraded: true, source: 'fallback' };
       }
 
       const parsed = this.parseCard(raw);
@@ -325,7 +325,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
         if (consistency.isValid) {
           // Le prompt demande la brièveté ; le code la GARANTIT. Le fallback
           // n'est pas nécessaire : carte LLM complète, non dégradée.
-          return applyMoodLimits({ ...parsed, level }, context);
+          return applyMoodLimits({ ...parsed, level, source: 'llm' }, context);
         }
         console.warn(`[ExplanationEngine] Fiche LLM rejetée pour incohérence factuelle (${consistency.reason}), bascule sur fallback local.`);
       } else {
@@ -334,12 +334,12 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
       }
 
       const local = this.fallbackCard(context, level);
-      return { ...local, degraded: true };
+      return { ...local, degraded: true, source: 'fallback' };
     } catch (error) {
       // LLM indisponible (clé expirée, réseau, timeout) : fallback + badge.
       console.error('[ExplanationEngine] LLM indisponible, fallback local avec badge:', error);
       const local = this.fallbackCard(context, level);
-      return { ...local, degraded: true };
+      return { ...local, degraded: true, source: 'fallback' };
     }
   }
 
@@ -350,7 +350,7 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
     previousClassification?: string | null
   ): CoachCard {
     const context = this.buildContext(record, previousClassification);
-    return this.fallbackCard(context, level);
+    return { ...this.fallbackCard(context, level), source: 'local' };
   }
 
   /**
@@ -951,7 +951,7 @@ Réponds UNIQUEMENT par un tableau JSON de ${count} chaînes, sans texte autour 
     const { played, best, verdict, context: moveCtx } = context;
     const classification = verdict.classification;
 
-    const playedDesc = describeMove(context.fen_before, played.uci);
+    const playedDesc = played.uci ? describeMove(context.fen_before, played.uci) : null;
     const playedText = playedDesc ? playedDesc.text : describePlayedFromContext(played);
 
     const bestDesc = best?.uci ? describeMove(context.fen_before, best.uci) : null;

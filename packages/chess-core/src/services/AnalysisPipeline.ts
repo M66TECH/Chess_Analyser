@@ -10,7 +10,7 @@ import { TheoryDetector } from '../explorer/TheoryDetector';
 import type { OpeningData } from '../explorer/ExplorerCache';
 import { MoveRecord, MoveNode, MoveTheory } from '../pedagogy/types';
 import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
-import type { PlayerLevel } from '../pedagogy/ExplanationContext';
+import type { CoachCard, PlayerLevel } from '../pedagogy/ExplanationContext';
 import { CloudEvalService } from './CloudEvalService';
 import { parseFen } from 'chessops/fen';
 import { Chess } from 'chessops/chess';
@@ -51,34 +51,96 @@ export class AnalysisPipeline {
   private importRunId = 0;
   private movePlaySeq = 0;
   private playerLevel: PlayerLevel = 'intermediaire';
+  private activeNodeId: string | null = null;
+  private llmInFlightKeys = new Set<string>();
+  private llmCompletedKeys = new Set<string>();
+
+  /**
+   * Remplace de façon IMMUABLE la `coachCard` d'un enregistrement déjà stocké :
+   * sans clonage du `MoveRecord`, l'état React (`prev`) garderait une référence
+   * vers l'objet muté et croirait `prev[idx].coachCard === next[idx].coachCard`
+   * (ignorant silencieusement toutes les fiches LLM asynchrones).
+   */
+  private updateRecordCoachCard(nodeId: string, card: CoachCard): MoveRecord | null {
+    const current = this.recordsByNodeId.get(nodeId);
+    if (!current) return null;
+    const updated: MoveRecord = { ...current, coachCard: card };
+    this.recordsByNodeId.set(nodeId, updated);
+    const idx = this.moveRecords.findIndex(r => r.nodeId === nodeId);
+    if (idx >= 0) {
+      this.moveRecords[idx] = updated;
+    } else {
+      this.syncMoveRecordsWithTree();
+    }
+    return updated;
+  }
+
+  private getPreviousClassification(nodeId: string): string | null {
+    const idx = this.moveRecords.findIndex(r => r.nodeId === nodeId);
+    return idx > 0 ? this.moveRecords[idx - 1].classification : null;
+  }
+
+  private llmRequestKey(record: MoveRecord, level: PlayerLevel): string {
+    return `${record.nodeId}:${level}:${record.theory?.openingName ?? ''}:${record.theory?.isTheory ? 1 : 0}`;
+  }
+
+  private requestLlmCard(
+    record: MoveRecord,
+    level: PlayerLevel,
+    previousClassification: string | null
+  ): void {
+    const key = this.llmRequestKey(record, level);
+    if (this.llmInFlightKeys.has(key) || this.llmCompletedKeys.has(key)) return;
+    if (record.coachCard?.source === 'llm' && record.coachCard.level === level && !record.theory) {
+      return;
+    }
+
+    this.llmInFlightKeys.add(key);
+    ExplanationEngine.generateCard(record, level, previousClassification)
+      .then((card) => {
+        this.llmInFlightKeys.delete(key);
+        const latest = this.recordsByNodeId.get(record.nodeId);
+        if (!latest || this.playerLevel !== level) return;
+        const normalizedCard: CoachCard = card.source
+          ? card
+          : { ...card, source: card.degraded ? 'fallback' : 'llm' };
+        if (normalizedCard.source === 'llm') {
+          this.llmCompletedKeys.add(key);
+        }
+        const updated = this.updateRecordCoachCard(record.nodeId, normalizedCard);
+        if (updated) {
+          this.eventBus.emit('PedagogyUpdated', updated);
+        }
+      })
+      .catch((error) => {
+        this.llmInFlightKeys.delete(key);
+        console.error('[AnalysisPipeline] Coach card failed:', error);
+      });
+  }
 
   public setPlayerLevel(level: PlayerLevel): void {
     if (this.playerLevel === level) return;
     this.playerLevel = level;
     let updated = false;
-    for (const [, rec] of this.recordsByNodeId) {
+    for (const [nodeId, rec] of this.recordsByNodeId) {
       if (rec.coachCard) {
-        rec.coachCard = ExplanationEngine.buildLocalCard(rec, level);
+        const localCard = ExplanationEngine.buildLocalCard(
+          rec,
+          level,
+          this.getPreviousClassification(nodeId)
+        );
+        this.recordsByNodeId.set(nodeId, { ...rec, coachCard: localCard });
         updated = true;
       }
     }
     if (updated) {
       this.syncMoveRecordsWithTree();
-      const last = this.moveRecords.at(-1);
-      if (last) {
-        this.eventBus.emit('PedagogyUpdated', last);
-        const prev = this.moveRecords.length >= 2 ? this.moveRecords[this.moveRecords.length - 2] : null;
-        ExplanationEngine.generateCard(last, level, prev?.classification ?? null)
-          .then((card) => {
-            if (this.playerLevel !== level) return;
-            last.coachCard = card;
-            if (this.recordsByNodeId.get(last.nodeId) === last) {
-              this.eventBus.emit('PedagogyUpdated', last);
-            }
-          })
-          .catch((error) => {
-            console.error('[AnalysisPipeline] Coach card level update failed:', error);
-          });
+      const target =
+        (this.activeNodeId ? this.recordsByNodeId.get(this.activeNodeId) : undefined) ??
+        this.moveRecords.at(-1);
+      if (target) {
+        this.eventBus.emit('PedagogyUpdated', target);
+        this.requestLlmCard(target, level, this.getPreviousClassification(target.nodeId));
       }
     }
   }
@@ -149,6 +211,7 @@ export class AnalysisPipeline {
   private setupListeners() {
     this.eventBus.on('MovePlayed', async ({ fenBefore, fenAfter, move, nodeId }) => {
       const seq = ++this.movePlaySeq;
+      this.activeNodeId = nodeId;
       // Get the node to extract SAN
       const tree = this.moveManager.getTree();
       const node = tree.nodes.get(nodeId);
@@ -278,8 +341,9 @@ export class AnalysisPipeline {
     });
 
     // Race navigation/analyse : invalider toute analyse en cours
-    this.eventBus.on('NavigateTo', () => {
+    this.eventBus.on('NavigateTo', ({ nodeId }) => {
       this.movePlaySeq++;
+      this.activeNodeId = nodeId;
       this.pendingMove = null;
       this.warmFen = null;
       this.latestEval = null;
@@ -287,6 +351,28 @@ export class AnalysisPipeline {
       this.theoryResolved = true;
       this.pedagogyDone = false;
       this.syncMoveRecordsWithTree();
+
+      // Si l'utilisateur consulte un coup issu d'un import PGN massif, d'une
+      // reprise localStorage ou d'un autre niveau, on l'enrichit à la volée via le LLM.
+      if (nodeId) {
+        const rec = this.recordsByNodeId.get(nodeId);
+        if (rec) {
+          const prevClass = this.getPreviousClassification(nodeId);
+          if (!rec.coachCard) {
+            const local = ExplanationEngine.buildLocalCard(rec, this.playerLevel, prevClass);
+            const updated = this.updateRecordCoachCard(nodeId, local);
+            if (updated) this.eventBus.emit('PedagogyUpdated', updated);
+          }
+          const current = this.recordsByNodeId.get(nodeId) ?? rec;
+          const needsLlmUpgrade =
+            !current.coachCard ||
+            current.coachCard.source === 'local' ||
+            current.coachCard.level !== this.playerLevel;
+          if (needsLlmUpgrade && typeof window !== 'undefined') {
+            this.requestLlmCard(current, this.playerLevel, prevClass);
+          }
+        }
+      }
     });
 
     this.eventBus.on('EngineEvaluationUpdated', (evaluation) => {
@@ -654,16 +740,7 @@ export class AnalysisPipeline {
     // Lors d'un import PGN massif (`isBulkImport`), on ne sature pas `/api/coach`
     // avec 80 requêtes LLM parallèles : la fiche locale enrichie suffit.
     if (!isBulkImport) {
-      ExplanationEngine.generateCard(analysis, this.playerLevel, previous?.classification ?? null)
-        .then(card => {
-          analysis.coachCard = card;
-          if (this.recordsByNodeId.get(nodeId) === analysis) {
-            this.eventBus.emit('PedagogyUpdated', analysis);
-          }
-        })
-        .catch(error => {
-          console.error('[AnalysisPipeline] Coach card failed:', error);
-        });
+      this.requestLlmCard(analysis, this.playerLevel, previous?.classification ?? null);
     }
   }
 
@@ -792,6 +869,16 @@ export class AnalysisPipeline {
     this.theoryResolved = false;
 
     this.eventBus.emit('AnalysisFinished', undefined as never);
+
+    // Après un import PGN massif, génère automatiquement la fiche LLM du coup affiché.
+    if (typeof window !== 'undefined' && this.moveRecords.length > 0) {
+      const active =
+        (this.activeNodeId ? this.recordsByNodeId.get(this.activeNodeId) : undefined) ??
+        this.moveRecords.at(-1);
+      if (active) {
+        this.requestLlmCard(active, this.playerLevel, this.getPreviousClassification(active.nodeId));
+      }
+    }
   }
 
   /**
@@ -910,7 +997,7 @@ export class AnalysisPipeline {
   }
 
   public getMoveRecords(): MoveRecord[] {
-    return [...this.moveRecords];
+    return this.moveRecords.map(r => ({ ...r }));
   }
 
   /** Restaure des `MoveRecord` persistés (ex. `localStorage`) dans l'arbre courant. */
@@ -953,6 +1040,9 @@ export class AnalysisPipeline {
     this.moveRecords = [];
     this.recordsByNodeId.clear();
     this.multiPvsByFen.clear();
+    this.llmInFlightKeys.clear();
+    this.llmCompletedKeys.clear();
+    this.activeNodeId = null;
     this.resetPending();
   }
 }

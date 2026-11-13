@@ -36,6 +36,8 @@ export interface CoachCard {
    * « Explication locale de repli » pour ne pas le cacher au joueur.
    */
   degraded?: boolean;
+  /** Provenance réelle de la fiche (`local` = attente/import, `llm` = validée IA, `fallback` = repli après échec). */
+  source?: 'llm' | 'local' | 'fallback';
 }
 
 export type PlayerLevel = 'debutant' | 'intermediaire' | 'avance';
