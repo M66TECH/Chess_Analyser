@@ -4,6 +4,7 @@ import { MoveManager } from '../services/MoveManager';
 import { GameEventBus, EngineEvaluation } from '../events/GameEventBus';
 import { OpeningExplorer } from '../explorer/OpeningExplorer';
 import { CloudEvalService } from '../services/CloudEvalService';
+import { ExplanationEngine } from '../pedagogy/ExplanationEngine';
 import type { EngineManager } from '../engine/EngineManager';
 
 /**
@@ -407,6 +408,58 @@ describe('AnalysisPipeline', () => {
       moveManager.goToNode(null);
       eventBus.emit('NavigateTo', { fen: n1.fenBefore, nodeId: null });
       expect(pipeline.getMoveRecords()).toHaveLength(2);
+    });
+
+    it('appelle le coach IA et classe en book quand OpeningExplorer arrive après CloudEval', async () => {
+      const { eventBus, moveManager, pipeline } = setup();
+
+      let resolveTheory!: (v: { data: { white: number; draws: number; black: number; moves: Array<{ uci: string; san: string; white: number; draws: number; black: number }> }; opening: { eco: string; name: string } }) => void;
+      vi.spyOn(OpeningExplorer, 'fetchWithOpening').mockImplementation(
+        () => new Promise(res => { resolveTheory = res; })
+      );
+
+      const llmSpy = vi.spyOn(ExplanationEngine, 'generateCard').mockResolvedValue({
+        headline: 'Ouverture solide',
+        insights: [{ kind: 'played_move', text: 'Votre pion occupe le centre.' }],
+        takeaway: 'Continuez le développement.',
+        level: 'avance',
+      });
+
+      // Position initiale déjà évaluée
+      eventBus.emit('EngineEvaluationUpdated', evaluation({ fen: START, cp: 20, pv: ['e2e4'] }));
+
+      const move = moveManager.playMove('e2e4');
+      const fenAfter = moveManager.getFen();
+      vi.spyOn(CloudEvalService, 'fetch').mockResolvedValue([
+        evaluation({ fen: fenAfter, depth: 30, source: 'cloud', cp: -20, pv: ['e7e5'] }),
+      ]);
+
+      eventBus.emit('MovePlayed', {
+        fenBefore: START,
+        fenAfter,
+        move: 'e2e4',
+        nodeId: move.nodeId!,
+      });
+
+      // Laisse CloudEval se résoudre avant OpeningExplorer
+      await new Promise(r => setTimeout(r, 15));
+
+      resolveTheory({
+        data: {
+          white: 500,
+          draws: 300,
+          black: 200,
+          moves: [{ uci: 'e7e5', san: 'e5', white: 200, draws: 150, black: 150 }, { uci: 'e2e4', san: 'e4', white: 250, draws: 150, black: 100 }],
+        },
+        opening: { eco: 'C20', name: "King's Pawn Game" },
+      });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(llmSpy).toHaveBeenCalledTimes(1);
+      const record = pipeline.getMoveRecords()[0];
+      expect(record.classification).toBe('book');
+      expect(record.coachCard?.headline).toBe('Ouverture solide');
     });
   });
 });

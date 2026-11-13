@@ -67,6 +67,18 @@ export class AnalysisPipeline {
       const last = this.moveRecords.at(-1);
       if (last) {
         this.eventBus.emit('PedagogyUpdated', last);
+        const prev = this.moveRecords.length >= 2 ? this.moveRecords[this.moveRecords.length - 2] : null;
+        ExplanationEngine.generateCard(last, level, prev?.classification ?? null)
+          .then((card) => {
+            if (this.playerLevel !== level) return;
+            last.coachCard = card;
+            if (this.recordsByNodeId.get(last.nodeId) === last) {
+              this.eventBus.emit('PedagogyUpdated', last);
+            }
+          })
+          .catch((error) => {
+            console.error('[AnalysisPipeline] Coach card level update failed:', error);
+          });
       }
     }
   }
@@ -191,7 +203,9 @@ export class AnalysisPipeline {
               this.theoryUiTimeout = null;
             }
             if (this.pedagogyDone && this.latestEval && this.latestEval.fen === fenAfter) {
-              this.runPedagogy(this.latestEval, true);
+              // Important : passer `false` pour ne pas traiter ce rafraîchissement théorique
+              // comme un import PGN massif (sinon l'appel au coach IA est court-circuité !).
+              this.runPedagogy(this.latestEval, false);
             }
           }
         });

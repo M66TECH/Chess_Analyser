@@ -116,6 +116,13 @@ export class MoveClassifier {
       }
     }
 
+    // 1b. Coup théorique sain (ouverture connue) : dès qu'un coup appartient à la
+    //     théorie et n'est pas une faute, on le classe « book » et il ne reçoit
+    //     pas de mention « brillant », « superbe », « meilleur coup » ou « excellent ».
+    if (options.isTheory) {
+      return { classification: 'book', accuracy };
+    }
+
     // 2. Évaluation des coups positifs remarquables (Brillants !! et Grands Coups !)
     const brilliancy = evaluateBrilliancy({
       fenBefore: options.fenBefore,

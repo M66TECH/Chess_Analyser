@@ -137,7 +137,7 @@ describe('P2.13 — Calibration des Coups Brillants (!!) et Grands Coups (!)', (
       expect(result.classification).toBe('blunder');
     });
 
-    it('9. Contrôle négatif 4 : Coup théorique d’ouverture', () => {
+    it('9. Contrôle négatif 4 : Coup théorique d’ouverture (classé « book », jamais « best » ni « brilliant »)', () => {
       // 1.e4 est standard
       const result = MoveClassifier.classify(0, {
         isBestMove: true,
@@ -148,7 +148,7 @@ describe('P2.13 — Calibration des Coups Brillants (!!) et Grands Coups (!)', (
         nextScore: { cp: 15 },
       });
 
-      expect(result.classification).toBe('best');
+      expect(result.classification).toBe('book');
     });
 
     it('10. Contrôle négatif 5 : Coup calme alternatif sans perte', () => {

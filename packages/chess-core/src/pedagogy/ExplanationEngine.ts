@@ -223,14 +223,12 @@ function doesPieceAttackRole(
  */
 export class ExplanationEngine {
   private static readonly SYSTEM_PROMPT = `# Rôle
-Tu es ChessCoach, entraîneur d'échecs pour DÉBUTANTS. Tu lis une analyse déjà calculée (Stockfish + Lichess + faits géométriques vérifiés). Tu ne recalcules rien.
+Tu es ChessCoach, entraîneur d'échecs pédagogique et factuel. Tu lis une analyse déjà calculée (Stockfish + Lichess + faits géométriques vérifiés). Tu ne recalcules rien. Adapte ton ton et la précision des concepts au niveau du joueur indiqué.
 
 # Règle absolue : court et simple
-- Le joueur débute. Il ne connaît pas la notation.
-- INTERDIT d'écrire une notation seule : ni « Nf3 », ni « Bxc6 », ni « a4 », ni « e2e4 ».
+- N'écris jamais une notation brute seule : ni « Nf3 », ni « Bxc6 », ni « a4 », ni « e2e4 ».
 - Nomme TOUJOURS la pièce en français (pion, cavalier, fou, tour, dame, roi) et indique sa case d'arrivée en clair : « le cavalier va en f3 ».
-- Aucun jargon : ni « centipawn », ni « tempo », ni « structure », ni « zone », ni « initiative ».
-- Pas de paragraphe. Une idée = une phrase de 15 mots maximum.
+- Évite le jargon chiffré (« centipawn »). Reste direct : une idée = une phrase courte.
 
 # Longueur imposée
 - headline : 10 mots maximum. C'est le conseil principal.
@@ -407,11 +405,11 @@ Chaque phrase doit expliquer clairement POURQUOI le coup aide ou nuit (capture, 
   private static buildPrompt(context: ExplanationContext, level: PlayerLevel): string {
     const levelInstructions: Record<PlayerLevel, string> = {
       debutant:
-        "Niveau du joueur : débutant. Phrases très courtes. Explique chaque terme d'échecs employé. Ne cite aucune variante.",
+        "Niveau du joueur : débutant. Phrases très courtes, concrètes, sans jargon technique. Explique simplement l'idée du coup.",
       intermediaire:
-        "Niveau du joueur : intermédiaire. Tu peux nommer les motifs tactiques (fourchette, clouage) en une demi-phrase.",
+        "Niveau du joueur : intermédiaire. Nomme les motifs tactiques (fourchette, clouage, développement, sécurité du roi) de façon concise.",
       avance:
-        "Niveau du joueur : avancé. Tu peux évoquer les plans et les structures de pions, en restant concis.",
+        "Niveau du joueur : avancé. Donne une analyse stratégique et tactique précise (plans, activité des pièces, cases faibles, initiative), de manière concise et directe.",
     };
 
     const mood = moodFor(context);

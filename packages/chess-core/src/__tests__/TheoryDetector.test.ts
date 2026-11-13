@@ -309,8 +309,8 @@ describe('TheoryDetector (P2 - Moteur de décision théorique pur)', () => {
       isTheory: true,
     });
 
-    // Qualité moteur préservée, accuracy réelle non forcée à 100%
-    expect(engineVerdict.classification).toBe('good');
+    // Coup théorique sain classé « book » (sans sur-étiquetage best/brilliant), accuracy réelle préservée
+    expect(engineVerdict.classification).toBe('book');
     expect(engineVerdict.accuracy).toBeGreaterThan(80);
     expect(engineVerdict.accuracy).toBeLessThan(100);
   });
